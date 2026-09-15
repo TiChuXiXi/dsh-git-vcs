@@ -281,6 +281,14 @@ function rawGit(args) {
   const r = spawnSync('git', args, { cwd: remoteScratch, env: process.env, stdio: 'ignore', windowsHide: true })
   return r.status
 }
+/** 读一条 git 命令的标准输出（沙箱下不能用管道抓子进程输出，统一走文件描述符重定向）。 */
+function rawGitOut(args) {
+  const outPath = join(scratch, `rawgit-${counter++}.txt`)
+  const fd = openSync(outPath, 'w')
+  spawnSync('git', args, { cwd: remoteScratch, env: process.env, stdio: ['ignore', fd, 'ignore'], windowsHide: true })
+  closeSync(fd)
+  return readFileSync(outPath, 'utf8').trim()
+}
 rawGit(['init', '--initial-branch=main', '--quiet'])
 rawGit(['config', 'user.email', 'verify@test'])
 rawGit(['config', 'user.name', 'verify'])
@@ -428,6 +436,58 @@ await check('stash drop 真的删掉记录', 'stash', { cwd: remoteScratch, acti
 await check('stash drop 之后列表为空', 'stash', { cwd: remoteScratch, action: 'list' }, (value) => (
   Array.isArray(value.stashes) && value.stashes.length === 0 ? undefined : `条数=${value.stashes === undefined ? 'n/a' : value.stashes.length}`
 ))
+
+/* ---------------------------------------- 提交树覆盖所有分支 + 续拉分页（issue #1 回归）
+ * 不带 --all 的 `git log` 只有当前分支的节点，提交树（Log 页签）会漏掉其它分支独有的提交；
+ * 带上 --all 之后又必须把 stash 挡在外面（它有独立页签，混进来就是一串认不出归属的节点）。
+ * 续拉靠 --skip：首屏 snapshot 与 log 端点必须给出同一个窗口，否则滚到底会重复或跳行。
+ */
+rawGit(['checkout', '--quiet', '-b', 'feature/tree'])
+writeFileSync(join(remoteScratch, 'feature-only.txt'), 'feature\n', 'utf8')
+rawGit(['add', 'feature-only.txt'])
+rawGit(['commit', '--quiet', '-m', 'feature: 只属于 feature/tree 的提交'])
+const featureHash = rawGitOut(['rev-parse', 'feature/tree'])
+rawGit(['checkout', '--quiet', 'main'])
+
+await check('提交树覆盖所有分支（all=true）', 'repo/snapshot', { cwd: remoteScratch, limit: 50, all: true }, (value) => {
+  const hashes = value.commits.map((row) => row.hash)
+  return hashes.includes(featureHash) ? undefined : 'feature/tree 独有的提交没出现在提交树里'
+})
+
+await check('不带 all 只有当前分支（回归基线）', 'repo/snapshot', { cwd: remoteScratch, limit: 50 }, (value) => {
+  const hashes = value.commits.map((row) => row.hash)
+  return hashes.includes(featureHash) === false ? undefined : 'HEAD 之外的提交混进了默认列表，说明 --all 变成了默认'
+})
+
+// stash 提交必须被 --exclude=refs/stash 挡在提交树外。
+writeFileSync(join(remoteScratch, 'stashed.txt'), 'v3\n', 'utf8')
+rawGit(['stash', 'push', '--quiet', '-m', 'tree-check'])
+const stashHead = rawGitOut(['rev-parse', 'stash@{0}'])
+
+await check('提交树不含 stash 节点', 'repo/snapshot', { cwd: remoteScratch, limit: 50, all: true }, (value) => {
+  const hashes = value.commits.map((row) => row.hash)
+  return hashes.includes(stashHead) === false ? undefined : 'stash 的提交混进了提交树'
+})
+rawGit(['stash', 'drop', '--quiet'])
+
+// 分页：首屏取 2 条，续拉 skip=2 取 2 条，两页拼起来必须与「一次取 4 条」逐字一致。
+const logAll = await handler('log', { cwd: remoteScratch, limit: 4, all: true }, new AbortController().signal)
+const logPage1 = await handler('repo/snapshot', { cwd: remoteScratch, limit: 2, all: true }, new AbortController().signal)
+const logPage2 = await handler('log', { cwd: remoteScratch, limit: 2, skip: 2, all: true }, new AbortController().signal)
+if (logAll.ok !== true || logPage1.ok !== true || logPage2.ok !== true) {
+  results.push(`FAIL 提交树分页: 端点返回失败 ${JSON.stringify([logAll, logPage1, logPage2]).slice(0, 200)}`)
+} else {
+  const hashes = (r) => r.value.commits.map((row) => row.hash)
+  const full = hashes(logAll)
+  const paged = [...hashes(logPage1), ...hashes(logPage2)]
+  if (full.length < 4) {
+    results.push(`FAIL 提交树分页: 临时仓库提交不足 4 条（${full.length}），用例前提不成立`)
+  } else if (JSON.stringify(full) === JSON.stringify(paged)) {
+    results.push('OK   提交树续拉与首屏窗口接着（skip 分页不重叠、不跳行）')
+  } else {
+    results.push(`FAIL 提交树分页串页：一次取=${full.join(',')} 分页取=${paged.join(',')}`)
+  }
+}
 
 /* ------------------------------------------------------- 凭据保存（credential/approve）
  * 用临时 gitconfig + credential-store 指向临时文件，绝不碰用户真实的 ~/.git-credentials。

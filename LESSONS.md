@@ -73,6 +73,8 @@
 | 2026-09-15 | 用 `width/height + border + border-radius: 50%` 画 10px 的小圆点，并用 `top: 50% + marginTop: -5px` 定位 | 小圆点改用 **SVG `<circle>`**（`r=4` + `strokeWidth=2`，外沿正好 5px）：CSS 小圆环在非整数行高（标签换行导致行高为奇数）下会被栅格化出棱角；SVG 圆在任何位置都是圆。HEAD 用**填充**区分（`fill = ring`），不是加粗描边 | 用户反馈"圆看着不圆了，感觉有棱角" | `lib/client.js`（GraphCell / S.node） |
 | 2026-09-15 | 提交树配色用「子提交 → 父提交」单遍继承（列表由新到旧，先写入的颜色生效） | 这类"谁先写到谁赢"的传播必须显式定优先级：把种子按**分支优先级**（当前分支 > 其它本地分支 > 远程分支）分组，逐组各刷一遍且不覆盖已染色结果 | 单遍继承的胜负取决于日志顺序：其它分支的 tip 更新时会先写父提交颜色，把当前分支整条链染成别的分支色（用户反例：main A-B-C-D + 远程在 C + test C-E，A/B/C/D 应为 main 色） | `lib/client.js`（logColorOf） |
 | 2026-09-15 | 分支列表把「当前分支」用选中背景（`rowOn`）标出来，行又照搬了可点行的 `cursor: pointer` | 只读列表里**不要把"当前项"做成选中态**：用行首标记（`*`）+ 强调色文字足够；行本身不可点就别给 pointer 光标（按钮自己有），hover 反馈只做背景变化 | 用户看到本地 main 一直"高亮选中"、远程行没有 hover 却又是手型光标，直接反馈"分支模块没必要有选中效果，只留 hover" —— 语义与可点性都不符 | `lib/client.js`（renderBranches / hoverBranch） |
+| 2026-09-15 | 提交树（Log 页签）只调 `git log -n 50` | 展示范围由**数据源参数**决定：不带 `--all` 的 `git log` 只有当前分支的祖先链，其它分支的提交根本不在数据里。面板承诺"所有分支"就要 `git log --exclude=refs/stash --all`，并把范围/分页参数在 host 侧抽成一个 `logArgs()` 给首屏与续拉**共用** | 只改客户端渲染永远看不到别的分支节点（数据没取回来）；首屏与续拉参数不一致时，滚到底续拉会重复或跳行。`refs/stash` 必须 `--exclude`（它只作用于紧随其后的 `--all`，两者要相邻），否则提交树里多出一串认不出归属的节点 | `index.js`（logArgs / repo/snapshot / log）、`lib/client.js`（loadMoreLog）、`scripts/verify-host.mjs`、`scripts/render-probe.mjs` |
+| 2026-09-15 | 为了让提交树"更好看"，给 `git log` 加 `--topo-order` / `--date-order` | 这两个排序要先 `limit_list()` 把**整段可达历史**读进内存排序，`-n 50` 也就不是流式的了；要做按需加载就保持 git 默认的反向时间序，只在 `-n` / `--skip` 上做文章 | 大仓库首屏从"只读 50 条"退化成"读全部提交再排序"——正是 issue #1 里担心的性能问题；流式输出才是懒加载成立的前提 | `index.js`（logArgs）、`README.md`（Log 章节） |
 
 ### 工具链/构建与环境 规范
 

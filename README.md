@@ -57,10 +57,10 @@ Version Control 工具窗（`Alt+9`）与 Commit 工具窗（`Alt+0`）——本
 | 端点 | 作用 | 门禁 |
 |------|------|------|
 | `repo/info` | 仓库根、分支、upstream、ahead/behind、git 版本、`remote.origin.url`、插件配置回显 | — |
-| `repo/snapshot` | 一次刷新所需的全部数据（status + log + 本地/远程分支 + stash + 版本 + remote），host 侧并发探测 | — |
+| `repo/snapshot` | 一次刷新所需的全部数据（status + log + 本地/远程分支 + stash + 版本 + remote），host 侧并发探测；`all: true` 时提交列表覆盖所有分支 | — |
 | `status` | `git status --porcelain=v2` → 按「冲突 / 已暂存 / 已修改 / 未跟踪」分组 | — |
 | `diff` | 单文件统一 diff；`staged` 取 index、`untracked` 走 `--no-index`、其余取工作区 | — |
-| `log` | 提交列表（可限条数 / 路径） | — |
+| `log` | 提交列表（`limit` / `skip` 分页、`all` 覆盖所有分支、可按 `branch` / `path` 过滤） | — |
 | `show` / `show/file` | 提交元数据 + 文件列表 / 单个文件的 diff（按需拉取） | — |
 | `branches` | 本地 + 远程分支（hash、upstream、ahead/behind；过滤 `origin/HEAD` 符号引用） | — |
 | `remote/list` | `git remote -v` | — |
@@ -217,6 +217,13 @@ Amend 语义是修补上一次提交，**忽略勾选**（按钮文案里已注�
 - **列宽**：时间 / Message / Author / Commit 四列表头右侧有拖动手柄（`col-resize`，pointer capture，
   不依赖 window 监听），拖动范围各自钳制（92–360 / 120–900 / 60–280 / 64–220px）；
   Message 列默认吃掉剩余宽度，被拖动后改为固定宽度，总宽超出面板即横向滚动。
+- **范围与懒加载**：列表覆盖**所有分支**（本地 + 远程）的节点，不只是当前分支——host 侧走
+  `git log --exclude=refs/stash --all`，stash 的提交被挡在外面（它有独立页签）。
+  一页 **50 条**，**滚动到底自动续拉**下一页（`--skip` 接着上一页的窗口取，按 hash 去重），
+  最多渲染 **2000 行**；刷新（含自动刷新）按「已加载条数」一次拉回，滚到深处不会因为刷新弹回第一页。
+  列表底部的续拉提示行**本身可点**（面板很高、50 行撑不出滚动条时的那条入口）。
+  刻意**不用** `--date-order` / `--topo-order`：这两种排序要先把整段可达历史读进内存排序，
+  大仓库上首屏会明显变慢，而默认的反向时间序是流式的——它才是「按需加载」成立的前提。
 
 ### 提交详情
 
@@ -343,8 +350,10 @@ Amend 语义是修补上一次提交，**忽略勾选**（按钮文案里已注�
 
 ## 已知限制（v1）
 
-- 历史只列当前分支（`--all` 需手工改调用）；提交树列是**单轨**图形（一条线 + 节点），
+- 提交树覆盖所有分支（本地 + 远程）的节点，但仍是**单轨**图形（一条线 + 节点），
   不是多分支 lane 的彩色提交图——分支信息通过**节点右侧的分支标签**表达。
+  tag 暂不画标签芯片，因此「只被 tag 指向」的提交会以无标签节点出现。
+  单次刷新最多渲染 2000 行（更早的历史靠滚到底续拉，超过上限后停止续拉）。
 - 差异视图是统一 diff 文本，没有并排 diff、没有按 hunk/行勾选提交（Partial Commit）。
 - `git stash push` 不带 `-u`，未跟踪文件不会被收走（面板暂无开关）。
 - Remotes 页增删远程后不会自动 fetch：track 关系已写进 `.git/config`，是否抓取由用户在工具栏点 Fetch。
@@ -357,12 +366,14 @@ Amend 语义是修补上一次提交，**忽略勾选**（按钮文案里已注�
 
 | 脚本 | 用途 |
 |------|------|
-| `node scripts\verify-host.mjs [仓库]` | 不需要挂 profile，直接在宿主域内跑全部 host 端点（真实 git、临时仓库）。覆盖解析结果、错误码门禁、`allowPush` 门禁、相对路径/非仓库拒绝、未跟踪文件 diff、勾选提交的 pathspec 回归等 **45 条断言** |
+| `node scripts\verify-host.mjs [仓库]` | 不需要挂 profile，直接在宿主域内跑全部 host 端点（真实 git、临时仓库）。覆盖解析结果、错误码门禁、`allowPush` 门禁、相对路径/非仓库拒绝、未跟踪文件 diff、勾选提交的 pathspec 回归、提交树覆盖所有分支 + `skip` 分页不串页等 **49 条断言** |
+| `node scripts\render-probe.mjs` | 浏览器半区的离线自检：本机没装 react，脚本自带一个迷你 React 把面板真挂起来，跑「打开仓库 → 切 Log → 滚到底续拉 → 刷新」，断言提交树渲染出其它分支独有的提交、续拉按 hash 去重、刷新不缩回一页（**9 条断言**，视觉部分仍需真机目测） |
 | `node scripts\preview-check.mjs` | 在 `node:vm` 沙箱里装载真实 host 半区，按 host-runner 的 cloneJson 规则校验每个端点的信封是否无损 JSON，并确认 RPC 通道注册成功 |
 | `node scripts\status-probe.mjs [仓库]` | 用插件自己的 `status` / `diff` 读当前工作区，逐条打印 index/worktree 标记与三种 diff 长度——排查「列表说改了、差异却是空」 |
 | `node scripts\web-rpc-probe.mjs` | 在**隔离的 DSH_HOME** 里用完整 web 组合（base + web-app + 本插件）起临时实例（端口 3199），抓 host 日志并对 `/git-vcs` 做免认证探测：**401 = 路由在**（与 `/api` 一致）、**405 = 路由不在**（被静态兜底接手） |
 
-浏览器半区没有离线自检：它必须在真实 GUI 里加载，靠 DevTools Console 与 `window.__DSH_BOOT__` 验证。
+浏览器半区的**视觉**没有离线自检：配色、列宽拖拽、hover 高亮仍必须在真实 GUI 里加载后目测
+（数据流转由 `scripts\render-probe.mjs` 覆盖）。
 
 **面板请求全部失败，报 `HTTP 405`**：说明 `/git-vcs` 路由没挂上——查启动日志里有没有
 `subprocess=就绪 connection=就绪` 与 `RPC 通道已注册：/git-vcs`。缺失的原因是插件行的 `inject`

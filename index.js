@@ -284,6 +284,32 @@ const STASH_FORMAT = '%H%x1f%ad%x1f%s%x1e'
 /** for-each-ref 一次同时取本地与远程分支。 */
 const REF_SCOPES = ['refs/heads', 'refs/remotes']
 
+/**
+ * 提交历史单次最多返回的条数。浏览器半区 50 条一页懒加载（滚到底续拉），
+ * 刷新时按「已加载条数」一次拉回，所以上限同时也是提交树最多渲染的行数。
+ */
+const LOG_LIMIT_MAX = 2000
+
+/**
+ * 提交历史的参数（repo/snapshot 与 log **共用** —— 两处分页必须逐字一致，否则续拉会串页）。
+ *
+ * `all` 打开后是 `--all`：本地分支 + 远程分支 + 标签全都在（IDEA 的提交树就是这个范围）。
+ * 必须同时用 `--exclude=refs/stash` 把 stash 挡在外面：它有独立页签，混进提交树只会变成
+ * 一串认不出归属的节点。`--exclude` 只作用于紧随其后的 `--all`，两者必须相邻。
+ *
+ * 刻意**不加** `--date-order` / `--topo-order`：这两个排序要先把整段可达历史读进内存排序，
+ * 大仓库上首屏会明显变慢；git 默认的反向时间序是流式的，配 `-n` / `--skip` 才能做到按需加载。
+ */
+function logArgs({ limit, skip, all, ref, path }) {
+  const args = ['log', '--no-color', '--date=iso-strict', `--pretty=format:${LOG_FORMAT}`]
+  if (all === true) args.push('--exclude=refs/stash', '--all')
+  if (Number.isInteger(skip) && skip > 0) args.push(`--skip=${skip}`)
+  args.push('-n', String(limit))
+  if (typeof ref === 'string' && ref !== '') args.push(ref)
+  if (typeof path === 'string' && path !== '') args.push('--', path)
+  return args
+}
+
 /** 解析 `for-each-ref --format=BRANCH_FORMAT` 的输出（本地 / 远程分组）。 */
 function parseBranchList(stdout) {
   const local = []
@@ -758,14 +784,17 @@ export function apply(ctx, rawConfig) {
     /**
      * 面板首屏聚合端点：repo/info + status + log + branches + stash + console 合成一次往返。
      * 6 个 git 探测全部并发——单次刷新的进程创建从约 16 次（6 次往返、串行）降到 6 次同波。
+     *
+     * `all: true` 时提交树覆盖**所有分支**的节点（见 logArgs）；`limit` 由浏览器半区按
+     * 「已加载条数」给，刷新不会把滚到深处的提交树缩回一页。
      */
     async 'repo/snapshot'(payload, signal) {
       const { cwd, root } = await ensureWorkdir(payload?.cwd, signal)
-      const limit = clampInt(Number.isInteger(payload?.limit) ? payload.limit : 50, 1, 500, 50)
+      const limit = clampInt(Number.isInteger(payload?.limit) ? payload.limit : 50, 1, LOG_LIMIT_MAX, 50)
       const consoleLimit = clampInt(Number.isInteger(payload?.consoleLimit) ? payload.consoleLimit : 60, 1, config.consoleLimit, 60)
       const [statusResult, logResult, branchResult, stashResult, remoteUrl, gitVersion] = await Promise.all([
         runGit(['status', '--porcelain=v2', '--branch', '-z'], { cwd: root, signal }),
-        runGit(['log', '--no-color', '--date=iso-strict', `--pretty=format:${LOG_FORMAT}`, '-n', String(limit)], { cwd: root, signal }),
+        runGit(logArgs({ limit, all: payload?.all === true }), { cwd: root, signal }),
         runGit(['for-each-ref', `--format=${BRANCH_FORMAT}`, ...REF_SCOPES], { cwd: root, signal }),
         runGit(['stash', 'list', '--date=iso-strict', `--pretty=format:${STASH_FORMAT}`], { cwd: root, signal }),
         remoteUrlOf(root, signal),
@@ -844,20 +873,22 @@ export function apply(ctx, rawConfig) {
       return { patch: result.stdout, empty: result.stdout.trim() === '', argv: result.argv }
     },
 
-    /** 提交历史。 */
+    /**
+     * 提交历史（提交树续拉走这里：`skip` = 已加载条数，`all` = 覆盖所有分支）。
+     * 参数构造与 repo/snapshot 共用 logArgs —— 分页要与首屏逐字一致，否则会重叠或跳行。
+     */
     async log(payload, signal) {
       const { root } = await ensureWorkdir(payload?.cwd, signal)
-      const limit = clampInt(Number.isInteger(payload?.limit) ? payload.limit : 50, 1, 500, 50)
-      const args = ['log', '--no-color', '--date=iso-strict', `--pretty=format:${LOG_FORMAT}`, '-n', String(limit)]
-      if (Number.isInteger(payload?.skip) && payload.skip > 0) args.push(`--skip=${payload.skip}`)
-      if (payload?.all === true) args.push('--all')
+      const limit = clampInt(Number.isInteger(payload?.limit) ? payload.limit : 50, 1, LOG_LIMIT_MAX, 50)
       const branch = payload?.branch
-      if (typeof branch === 'string' && branch !== '') args.push(readRef(payload, 'branch'))
       const filePath = payload?.path
-      if (typeof filePath === 'string' && filePath !== '') {
-        args.push('--', filePath)
-      }
-      const result = await runGit(args, { cwd: root, signal })
+      const result = await runGit(logArgs({
+        limit,
+        skip: Number.isInteger(payload?.skip) ? payload.skip : 0,
+        all: payload?.all === true,
+        ref: typeof branch === 'string' && branch !== '' ? readRef(payload, 'branch') : '',
+        path: typeof filePath === 'string' && filePath !== '' ? filePath : '',
+      }), { cwd: root, signal })
       if (result.exitCode !== 0 && result.stderr.includes('does not have any commits')) return { commits: [] }
       gitOk(result)
       return { commits: parseCommitList(result.stdout) }

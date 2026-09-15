@@ -404,4 +404,51 @@
 - **后续**：PR 合并后把 awesome badge 挂到 README；截图可另加 `screenshots.json`（1–8 张相对路径，
   放本仓库、以后再改不必再提 PR）。
 
+### 2026-09-15（处理仓库 issue #1：提交树覆盖所有分支 + 懒加载）
+
+**问题（issue #1「提交树看不全所有节点信息」）**：提交树只有当前分支的节点，看不到其它分支的；
+要求覆盖该仓库所有分支的节点，并注意性能（必要时懒加载）。
+
+**结论：问题在数据源，不在渲染。** `repo/snapshot` 里那条 `git log -n 50` 不带 `--all`，只有 HEAD 的
+祖先链——其它分支独有的提交**根本没被取回来**，客户端再怎么渲染也看不到。
+
+1. **host（`index.js`）**
+   - 新增 `logArgs()`：`repo/snapshot` 与 `log` **共用**同一套参数构造（分页参数必须逐字一致，
+     否则续拉会串页）。`all: true` → `--exclude=refs/stash --all`（`--exclude` 只作用于紧随其后的
+     `--all`，两者必须相邻；stash 有独立页签，混进来就是一串认不出归属的节点）。
+   - **不加** `--date-order` / `--topo-order`：两者都要先 `limit_list()` 把整段可达历史读进内存排序，
+     `-n 50` 就不再是流式的——这正是 issue 里担心的性能问题。默认反向时间序是流式的，
+     配 `-n`/`--skip` 才让懒加载成立（大仓库实测：1028 提交/28 分支，三种排序都在 100–220ms 噪声区间，
+     但只有默认序是流式的）。
+   - 单次上限 `LOG_LIMIT_MAX = 2000`（原 `log` 与 `snapshot` 都是 500）。
+   - `log` 端点保留 `limit` / `skip` / `all` / `branch` / `path` 全部参数，改用 `logArgs()`。
+
+2. **客户端（`lib/client.js`）**
+   - 首屏 `repo/snapshot` 带 `all: true`，`limit = min(max(已加载条数, 50), 2000)` —— 刷新（含自动刷新）
+     不会把滚到深处的提交树缩回一页。
+   - 新增 `loadMoreLog()`：滚到底前 160px 触发（`onScroll` 挂在 Log 的滚动容器上，用 ref 防重入），
+     `log { limit: 50, skip: 已加载条数, all: true }` 续拉，按 hash 去重后追加；返回不足一页即判定到底。
+   - 列表底部：还有更多时提示「滚动到底部继续加载更早的提交…」，到 2000 行上限时提示已到上限。
+   - `logGraphData()`：标签 / 配色 / 树列宽度这些 O(提交数) 的推导按引用相等缓存（hover 每变一次就要
+     重渲染整棵树，2000 行时差别明显）。刻意**不用 `useMemo`**：`renderLog` 只在 Log 页签被调用，
+     在它里面挂钩子会让 hook 数量随页签切换变化（React 会直接报错）。
+
+3. **自检（新增 4 + 9 条断言，全绿）**
+   - `scripts/verify-host.mjs` **49/49**：新增「提交树覆盖所有分支（all=true）」「不带 all 只有当前分支」
+     「提交树不含 stash 节点」「续拉与首屏窗口接着（skip 分页不重叠、不跳行）」。
+   - 新增 `scripts/render-probe.mjs` **9/9**：本机没装 react，脚本自带一个迷你 React
+     （createElement / useState / useEffect / useRef）把面板真挂起来，跑「打开仓库 → 切 Log →
+     滚到底续拉 → 刷新」，断言其它分支独有的提交渲染出来了、续拉按 hash 去重、刷新不缩回一页。
+     反向验证过它的有效性：把 `all: true` 改成 `false` 后立刻 5 条 FAIL。
+
+4. **文档**：README 的 Log 章节加「范围与懒加载」小节（含为什么不用 topo/date 排序），
+   已知限制里删掉「历史只列当前分支」，RPC 表的 `repo/snapshot` / `log` 行补上新参数。
+
+**待办**：版本未 bump（仍是 `0.1.0`），本次修复只落在本地 `main`（commit `0a27c0a`）。
+用户明确选择**先不推送、先不发布**（"只留本地提交"），因此 issue #1 也先不回复/不关闭 ——
+要让真机面板吃到修复，需要发 `0.1.1`（npm + GitHub Release）并把 profile 切到新版本，
+或临时把 profile 切回本地目录（`dsh plugin --profile web add link:D:/zxh/code/git-plugin`）。
+恢复这条线索时先问用户，不要自行 push / publish。
+
+
 
