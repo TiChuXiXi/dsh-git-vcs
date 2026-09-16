@@ -439,7 +439,7 @@ Amend 语义是修补上一次提交，**忽略勾选**（按钮文案里已注�
 | `node scripts\dom-probe.mjs` | 浏览器半区的**真机几何自检**：起 headless Chrome/Edge 渲染真实 `lib/client.js`（夹具数据），通过 CDP 取回**渲染后的像素几何**，断言泳道竖线与圆点同心、斜线只占行高的 32%（分叉）/ 从 68% 到行底（合并）、斜线层高度等于行高，并单独加载一份「非仓库」快照断言**空态**行为：功能内容一条都不渲染、空态块铺满且按钮居中、无多余长文案、点按钮先展开分支名（默认 `main`、备选 `main`/`master`、点备选能改输入值）、确认后才发 `repo/init` 且带上所选分支、成功后功能面板自己长回来（**18 条断言**）。先 `npm install --prefix .npm-cache/domprobe react@18.3.1 react-dom@18.3.1`；缺浏览器/React 会自动跳过。**沙箱禁止命名管道**（Chrome 的 mojo IPC 会直接 FATAL），需放宽权限或沙箱外运行 |
 | `node scripts\preview-check.mjs` | 在 `node:vm` 沙箱里装载真实 host 半区，按 host-runner 的 cloneJson 规则校验每个端点的信封是否无损 JSON，并确认 RPC 通道注册成功 |
 | `node scripts\status-probe.mjs [仓库]` | 用插件自己的 `status` / `diff` 读当前工作区，逐条打印 index/worktree 标记与三种 diff 长度——排查「列表说改了、差异却是空」 |
-| `node scripts\web-rpc-probe.mjs` | 在**隔离的 DSH_HOME** 里用完整 web 组合（base + web-app + 本插件）起临时实例（端口 3199），抓 host 日志并对 `/git-vcs` 做免认证探测：**401 = 路由在**（与 `/api` 一致）、**405 = 路由不在**（被静态兜底接手） |
+| `node scripts\web-rpc-probe.mjs [插件目录]` | 在**隔离的 DSH_HOME** 里用完整 web 组合（base + web-app + 本插件）起临时实例（端口 3199），抓 host 日志并对 `/git-vcs` 做免认证探测：**401 = 路由在**（与 `/api` 一致）、**405 = 路由不在**（被静态兜底接手）。不传目录用当前源码；**传目录可以验证"别人从 npm 装到的那份"**，例如 `node scripts\web-rpc-probe.mjs "$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-git-vcs"` |
 
 浏览器半区的**布局/视觉**由 `scripts\dom-probe.mjs` 用 headless 浏览器量像素来守（泳道几何、圆点同心、斜线跨度）；
 配色与列宽拖拽的手感仍需真机目测。**数据流转**由 `scripts\render-probe.mjs` 覆盖。

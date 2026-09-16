@@ -3,13 +3,17 @@
  * 抓插件的 host 日志，并对 /git-vcs 路由做一次免认证探测：
  *   路由存在 → 连接服务会回 401/403（未认证）；路由不存在 → 静态兜底回 405。
  * 用 --port 3199 与用户正在跑的实例隔离。
+ *
+ * 用法：node scripts/web-rpc-probe.mjs [插件目录]
+ *   不传参数时用本仓库源码；传参数可以指向**从 npm 装下来的那份**
+ *   （例如 ~/.dsh/profiles/web/node_modules/dsh-git-vcs），用来验证"别人装到的版本"能挂上。
  */
 import { cpSync, mkdirSync, openSync, closeSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 
-const pluginDir = resolve(import.meta.dirname, '..')
+const pluginDir = resolve(process.argv[2] ?? join(import.meta.dirname, '..'))
 const testHome = join(tmpdir(), `dsh-probe-${process.pid}-${Date.now()}`)
 const profileName = 'probe'
 const profileDir = join(testHome, 'profiles', profileName)
@@ -24,7 +28,15 @@ writeFileSync(join(profileDir, 'package.json'), `${JSON.stringify({
 }, null, 2)}\n`)
 cpSync(pluginDir, join(profileDir, 'node_modules', 'dsh-git-vcs'), {
   recursive: true,
-  filter: (src) => !src.includes('node_modules') && !src.endsWith('.git') && !src.includes('.opencode') && !src.includes('.npm-cache'),
+  // 过滤用**相对 pluginDir 的路径**：早先按绝对路径做子串匹配，导致传入的目录只要自己
+  // 位于某个 node_modules 下（比如 npm 装下来的那份）就会连根目录一起被排除、什么都不复制。
+  filter: (src) => {
+    const rel = relative(pluginDir, src).replace(/\\/g, '/')
+    if (rel === '') return true
+    const segments = rel.split('/')
+    if (segments.includes('node_modules')) return false
+    return !(segments[0] === '.git' || segments[0] === '.opencode' || segments[0] === '.npm-cache')
+  },
 })
 
 // 可选实验：给 connection 行补 webServer（验证 “注册路由读的是 connection 自己的 ctx” 这一假设）
