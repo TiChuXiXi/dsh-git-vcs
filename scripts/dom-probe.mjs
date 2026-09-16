@@ -77,16 +77,18 @@ const value = {
   commits, branches, stashes: [], console: [],
 }
 window.__initCalls = 0
+window.__initPayload = null
 window.__inited = false
 // mode = 'no-repo'：先让 repo/snapshot 回 not-a-repo（面板该走空态），repo/init 成功后恢复正常。
 // 注意实参顺序：客户端拿到的 face.call 已经闭包了 CHANNEL，它转手调
 // ctx.connection.rpc.call(CHANNEL, endpoint, payload) —— 所以这层的第一个参数是 channel。
-const call = async (channel, endpoint) => {
+const call = async (channel, endpoint, payload) => {
   if (window.__mode === 'no-repo') {
     if (endpoint === 'repo/init') {
       window.__initCalls += 1
+      window.__initPayload = payload
       window.__inited = true
-      return { ok: true, value: { root: 'D:/fixture', branch: 'main', already: false, message: 'Initialized empty Git repository in D:/fixture/.git/' } }
+      return { ok: true, value: { root: 'D:/fixture', branch: (payload && payload.branch) || 'main', already: false, message: 'Initialized empty Git repository in D:/fixture/.git/' } }
     }
     if (window.__inited !== true) {
       return { ok: false, error: { code: 'git-vcs/not-a-repo', message: '不是 git 仓库：D:/fixture', details: { cwd: 'D:/fixture' } } }
@@ -98,6 +100,11 @@ const call = async (channel, endpoint) => {
 
 const pageScript = `
 const wait = (ms) => new Promise((done) => setTimeout(done, ms))
+// 页面里的异常（React 渲染错误是异步抛的，不会走到下面的 try/catch）收集起来一起回传，
+// 否则只会看到"root 里什么都没有"这种二手症状。
+window.__errors = []
+window.addEventListener('error', (event) => window.__errors.push(String(event.message || (event.error && event.error.stack) || event.error)))
+window.addEventListener('unhandledrejection', (event) => window.__errors.push('unhandledrejection: ' + String(event.reason)))
 const half = window.__entry.factory((name) => {
   if (name === 'react') return window.React
   throw new Error('未提供的模块 ' + name)
@@ -129,22 +136,51 @@ const panelBox = () => rect(document.getElementById('root').firstElementChild)
 /* ---------------------------------------------------------- 未初始化仓库：整页空态 */
 if (window.__mode === 'no-repo') {
   const rootEl = document.getElementById('root').firstElementChild
-  const emptyWrap = [...rootEl.children].find((node) => (node.textContent || '').includes('不是 Git 仓库'))
-  const initBtn = emptyWrap === undefined ? null : [...emptyWrap.querySelectorAll('button')].find((node) => (node.textContent || '').includes('初始化'))
+  if (rootEl === null) return { error: 'no-repo 模式下面板根节点没渲染出来：' + JSON.stringify(window.__errors) }
+  const emptyWrap = () => [...rootEl.children].find((node) => (node.textContent || '').includes('不是 Git 仓库'))
+  const first = emptyWrap()
+  const openBtn = first === undefined ? null : [...first.querySelectorAll('button')].find((node) => (node.textContent || '').includes('初始化 Git 仓库'))
   const before = {
     tabs: buttonTexts(),
-    emptyText: emptyWrap === undefined ? '' : (emptyWrap.textContent || ''),
-    emptyBox: emptyWrap === undefined ? null : rect(emptyWrap),
+    emptyText: first === undefined ? '' : (first.textContent || ''),
+    emptyBox: first === undefined ? null : rect(first),
     panelBox: panelBox(),
     pathBarBox: rootEl.children.length === 0 ? null : rect(rootEl.children[0]),
-    emptyButtons: emptyWrap === undefined ? -1 : emptyWrap.querySelectorAll('button').length,
-    initBox: initBtn === null ? null : rect(initBtn),
+    emptyButtons: first === undefined ? -1 : first.querySelectorAll('button').length,
+    initBox: openBtn === null ? null : rect(openBtn),
     graphRows: [...document.querySelectorAll('div[title]')].filter((row) => row.querySelector('svg[width="12"]') !== null).length,
   }
-  if (initBtn !== null) { initBtn.click(); await wait(800) }
+
+  // 第一下：只展开分支名选择，还不能发 repo/init。
+  if (openBtn !== null) { openBtn.click(); await wait(300) }
+  const ask = emptyWrap()
+  const branchInput = ask === undefined ? null : ask.querySelector('input')
+  const chips = ask === undefined ? [] : [...ask.querySelectorAll('button')].map((node) => (node.textContent || '').trim())
+  const chooser = {
+    shown: ask !== undefined && branchInput !== null,
+    branchValue: branchInput === null ? null : branchInput.value,
+    chips,
+    initCallsAfterOpen: window.__initCalls,
+  }
+  // 选备选 master → 输入框要跟着变；再点「初始化」才真的发请求。
+  if (ask !== undefined) {
+    const masterChip = [...ask.querySelectorAll('button')].find((node) => (node.textContent || '').trim() === 'master')
+    if (masterChip !== undefined) { masterChip.click(); await wait(200) }
+  }
+  const afterChip = emptyWrap()
+  const chipInput = afterChip === undefined ? null : afterChip.querySelector('input')
+  chooser.valueAfterChip = chipInput === null ? null : chipInput.value
+  const goBtn = afterChip === undefined ? null : [...afterChip.querySelectorAll('button')].find((node) => (node.textContent || '').trim() === '初始化')
+  if (goBtn !== null) { goBtn.click(); await wait(900) }
   return {
     before,
-    after: { tabs: buttonTexts(), emptyGone: [...rootEl.children].some((node) => (node.textContent || '').includes('不是 Git 仓库')) === false, initCalls: window.__initCalls },
+    chooser,
+    after: {
+      tabs: buttonTexts(),
+      emptyGone: emptyWrap() === undefined,
+      initCalls: window.__initCalls,
+      initPayload: window.__initPayload,
+    },
   }
 }
 
@@ -375,7 +411,10 @@ if (emptyCase.error !== undefined) {
   ok('空态里有仓库路径提示', before.emptyText.includes('不是 Git 仓库') && before.emptyText.includes('D:/fixture')
     ? undefined
     : `空态文案=${JSON.stringify(before.emptyText.slice(0, 120))}`)
-  ok('空态里只有一个按钮（初始化）', before.emptyButtons === 1 && before.initBox !== null ? undefined : `按钮数=${before.emptyButtons}`)
+  ok('空态里只有一行说明 + 一个按钮（没有多余长文案）',
+    before.emptyButtons === 1 && before.initBox !== null
+      ? (before.emptyText.length <= 60 ? undefined : `空态文案太长（${before.emptyText.length} 字）：${JSON.stringify(before.emptyText.slice(0, 120))}`)
+      : `按钮数=${before.emptyButtons}`)
 
   // 铺满：空态块必须横向占满面板、纵向吃掉路径栏以下的全部空间（flex:1 掉了就会缩成左上角一条）。
   if (before.emptyBox === null || before.pathBarBox === null) {
@@ -397,7 +436,21 @@ if (emptyCase.error !== undefined) {
     }
   }
 
-  ok('点击初始化后调用了一次 repo/init', after.initCalls === 1 ? undefined : `调用次数=${after.initCalls}`)
+  // 分支名选择：点第一下只展开表单，不能已经发了 repo/init；备选 main/master 要能改输入框的值。
+  const chooser = emptyCase.chooser
+  ok('点按钮先展开分支名选择（此时还没发 repo/init）',
+    chooser.shown === true && chooser.initCallsAfterOpen === 0
+      ? undefined
+      : `表单出现=${chooser.shown}、此时调用次数=${chooser.initCallsAfterOpen}`)
+  ok('分支名默认 main，且备选里有 main / master',
+    chooser.branchValue === 'main' && chooser.chips.includes('main') && chooser.chips.includes('master')
+      ? undefined
+      : `默认值=${JSON.stringify(chooser.branchValue)}、按钮=${JSON.stringify(chooser.chips)}`)
+  ok('点 master 备选后输入框变成 master', chooser.valueAfterChip === 'master' ? undefined : `输入框=${JSON.stringify(chooser.valueAfterChip)}`)
+
+  ok('确认后才调用 repo/init，且分支名随用户选择带上', after.initCalls === 1 && after.initPayload?.branch === 'master'
+    ? undefined
+    : `调用次数=${after.initCalls}、payload=${JSON.stringify(after.initPayload)}`)
   ok('初始化成功后空态消失、功能面板自己长回来', after.emptyGone === true && before.emptyButtons === 1
     && FEATURES.every((text) => after.tabs.includes(text)) && after.tabs.includes('Refresh')
     ? undefined

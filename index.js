@@ -878,7 +878,7 @@ export function apply(ctx, rawConfig) {
      *   · 目录本身就是仓库根 → 不重复初始化，返回 `already: true`（重复点击 / 竞态都安全）。
      *   · 目录在别的仓库**内部**（子目录）→ 拒绝，避免凭空造出嵌套仓库。
      */
-    async init(payload, signal) {
+    async 'repo/init'(payload, signal) {
       requireWrite()
       const cwd = await validateCwd(payload?.cwd)
       // 判断"是不是已经在某个仓库里"用 --show-prefix：它给的是 cwd 相对仓库根的路径，

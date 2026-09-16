@@ -582,5 +582,38 @@
   自检表更新为 63/15 条；LESSONS 补 5 条（Windows 路径比较、未出生分支/`(initial)`、空态 UX 规则、
   探针夹具参数顺序、正则漏匹配导致错误结论）。
 
+## 2026-09-16 · 用户真机反馈：点「初始化」没反应 → 端点名不一致 + 分支名选择
+
+- **用户反馈（附真机截图）**："我重启后测试了，找了一个新的目录，点击初始化按钮根本没用，
+  还有不需要下面那么多描述，正常点击按钮使用即可，点击初始化时有一点可以优化，
+  就是点击后可以让用户输入或者选择初始主分支的名称，可以随意输入，也可以使用备选项的 main 或 master"。
+- **根因（对应"根本没用"）**：**跨半区端点名不一致**。客户端发 `rpc('repo/init')`，
+  而 host 的方法键名是 `async init(...)` → `endpoints['repo/init']` 为 undefined →
+  回 `git-vcs/unknown-endpoint`，界面上只有一条 6 秒后消失的 `未知端点：repo/init` toast，
+  看起来就是"点了没反应"。**为什么 63 条自检全绿**：自检自己也是拿 `'init'` 调的 ——
+  两边一起错，永远不会红。已把 host 键名改成 `'repo/init'`（与 `repo/info` / `repo/snapshot` 一致），
+  自检里的 `'init'` 也全部改过来。
+- **新增结构性断言（防同类）**：`verify-host.mjs` 末尾从 `lib/client.js` 的字面量
+  （`rpc('x'` / `run('x'`）**反查**客户端调用的 25 个端点，逐个打到 host，出现
+  `git-vcs/unknown-endpoint` 就报错。反向验证：把 host 键名改回 `init` → 立刻
+  `FAIL 客户端调用了 host 没有的端点：repo/init`（共 12 条红）。
+- **按用户要求改 UI（`lib/client.js`）**：
+  - 删掉空态下面那一整段说明文字（现在只有 图标 + 标题 + 目录路径 + 按钮；探针加了一条
+    "空态文案 ≤ 60 字"的断言把这一点钉住）；
+  - 点「在当前目录初始化 Git 仓库」→ 先展开**初始分支名**表单：文本输入（默认 `main`，
+    回车即确认）+ `main` / `master` 两个一键备选（选中态高亮）+「初始化」/「取消」；
+    确认后才发 `repo/init`（带 `branch`）；`allowWrite=false` 时直接显示"已禁用初始化"。
+- **新代码里的一个真 bug，被探针先抓到**：分支输入框我最初写成 `TextInput({...})` **直接调用**，
+  而它内部有 `useState` —— hook 被记到父组件头上，且它是条件渲染（展开表单才出现）→
+  第二次渲染直接 `Minified React error #310`（Rendered more hooks than during the previous render），
+  **整个面板空白**。改成 `h(TextInput, {...})`。为拿到原始报错，`dom-probe.mjs` 现在会在页面里挂
+  `window.onerror` / `unhandledrejection` 并把异常一起回传（否则只看到"root 里没有子节点"）。
+- **自检**：`verify-host.mjs` 63 → **64 条**；`dom-probe.mjs` 15 → **18 条**（新增：点按钮先展开
+  分支名且此时不能发 `repo/init`、默认值是 `main` 且备选含 `main`/`master`、点 `master` 备选后
+  输入框变成 master、确认后 `payload.branch` 就是 master、空态文案不过长）；
+  全绿：verify-host 64/64、render-probe 14/14、`--real` 16/16、dom-probe 18/18、preview-check 全通过。
+- **真机生效前提**：host 与客户端两个半区都改了 → 需要**重启 `dsh web`**（host 半区）+ 页面强制刷新
+  （客户端半区）；只刷新页面的话 host 还是旧键名，按钮依旧没反应。
+
 
 

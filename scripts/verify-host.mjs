@@ -9,9 +9,11 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, openSync, closeSync, readFileSync, existsSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { apply } from '../index.js'
 
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = resolve(process.argv[2] ?? process.cwd())
 const scratch = mkdtempSync(join(tmpdir(), 'gitvcs-verify-'))
 let counter = 0
@@ -512,7 +514,7 @@ await expectError('非仓库目录：repo/snapshot 回 not-a-repo', 'repo/snapsh
 // 初始分支名的期望值：入参 → git config init.defaultBranch → main（与本机配置无关，两种都算对）。
 const configuredInitBranch = gitOutAt(REPO, ['config', '--get', 'init.defaultBranch'])
 let initValue = null
-await check('repo/init 在空目录建仓库', 'init', { cwd: initScratch }, (value) => {
+await check('repo/init 在空目录建仓库', 'repo/init', { cwd: initScratch }, (value) => {
   initValue = value
   if (value.root.replace(/\\/g, '/').toLowerCase() !== initScratch.replace(/\\/g, '/').toLowerCase()) return `root=${value.root}`
   const expected = configuredInitBranch === '' ? 'main' : configuredInitBranch
@@ -540,29 +542,29 @@ await check('repo/init 之后 snapshot 立即可用（空仓库：0 提交、当
   return undefined
 })
 
-await check('重复 repo/init 幂等（already=true，不重复建）', 'init', { cwd: initScratch }, (value) => (
+await check('重复 repo/init 幂等（already=true，不重复建）', 'repo/init', { cwd: initScratch }, (value) => (
   value.already === true ? undefined : `already=${value.already}`
 ))
 
 const trunkScratch = mkdtempSync(join(tmpdir(), 'gitvcs-init-trunk-'))
-await check('repo/init 支持指定初始分支', 'init', { cwd: trunkScratch, branch: 'trunk' }, (value) => (
+await check('repo/init 支持指定初始分支', 'repo/init', { cwd: trunkScratch, branch: 'trunk' }, (value) => (
   value.branch === 'trunk' ? undefined : `branch=${value.branch}`
 ))
 results.push(gitOutAt(trunkScratch, ['symbolic-ref', '--short', 'HEAD']) === 'trunk'
   ? 'OK   指定分支真的生效（HEAD → trunk）'
   : 'FAIL 指定初始分支没有生效')
-await expectError('repo/init 非法分支名被拒', 'init', { cwd: mkdtempSync(join(tmpdir(), 'gitvcs-init-bad-')), branch: 'bad name' }, 'git-vcs/bad-request')
-await expectError('repo/init 分支名以 - 开头被拒', 'init', { cwd: mkdtempSync(join(tmpdir(), 'gitvcs-init-dash-')), branch: '-x' }, 'git-vcs/bad-request')
+await expectError('repo/init 非法分支名被拒', 'repo/init', { cwd: mkdtempSync(join(tmpdir(), 'gitvcs-init-bad-')), branch: 'bad name' }, 'git-vcs/bad-request')
+await expectError('repo/init 分支名以 - 开头被拒', 'repo/init', { cwd: mkdtempSync(join(tmpdir(), 'gitvcs-init-dash-')), branch: '-x' }, 'git-vcs/bad-request')
 
 // 已经是仓库根的目录：init 不重复初始化（返回 already），也不该报错。
-await check('对已有仓库根 init → already=true', 'init', { cwd: remoteScratch }, (value) => (
+await check('对已有仓库根 init → already=true', 'repo/init', { cwd: remoteScratch }, (value) => (
   value.already === true ? undefined : `already=${value.already}`
 ))
 
 // 仓库内部的子目录：必须拒绝，避免凭空造出嵌套仓库。
 mkdirSync(nestedScratch, { recursive: true })
 gitOutAt(nestedParent, ['init', '--quiet'])
-await expectError('仓库内子目录 init 被拒（不造嵌套仓库）', 'init', { cwd: nestedScratch }, 'git-vcs/bad-request')
+await expectError('仓库内子目录 init 被拒（不造嵌套仓库）', 'repo/init', { cwd: nestedScratch }, 'git-vcs/bad-request')
 results.push(existsSync(join(nestedScratch, '.git')) === false
   ? 'OK   被拒的嵌套目录没有留下 .git'
   : 'FAIL 嵌套 init 被拒但仍写下了 .git')
@@ -579,7 +581,7 @@ apply({
   },
   effect(fn) { fn() },
 }, { allowWrite: false, allowPush: false, allowDangerous: false })
-const noWrite = await initHandler('init', { cwd: mkdtempSync(join(tmpdir(), 'gitvcs-init-nowrite-')) }, new AbortController().signal)
+const noWrite = await initHandler('repo/init', { cwd: mkdtempSync(join(tmpdir(), 'gitvcs-init-nowrite-')) }, new AbortController().signal)
 if (noWrite.ok === false && noWrite.error.code === 'git-vcs/write-disabled') results.push('OK   allowWrite=false 时 init 被门禁拦截')
 else results.push(`FAIL allowWrite=false 时 init 未被拦截：${JSON.stringify(noWrite).slice(0, 160)}`)
 
@@ -643,6 +645,28 @@ try {
 }
 
 rmSync(remoteScratch, { recursive: true, force: true })
+
+/* --------------------- 客户端调用的端点必须都在 host 的表里（防改名 / 拼错端点名）
+ * 这条是真机踩出来的：客户端发 `repo/init`、host 的键名当时是 `init` → 面板点按钮
+ * 毫无反应（只有一条 6 秒就消失的 `git-vcs/unknown-endpoint` toast）。而那时的自检
+ * 自己也是拿 `init` 调的，两边一起错、全绿 —— 所以这里不再手写端点名，而是从
+ * `lib/client.js` 的字面量里反查 host。
+ */
+const clientSource = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
+const calledEndpoints = new Set()
+for (const match of clientSource.matchAll(/\b(?:rpc|run|rawCall)\(\s*'([^']+)'/g)) calledEndpoints.add(match[1])
+const missingEndpoints = []
+for (const name of calledEndpoints) {
+  const probe = await handler(name, {}, new AbortController().signal)
+  if (probe.ok === false && probe.error.code === 'git-vcs/unknown-endpoint') missingEndpoints.push(name)
+}
+if (calledEndpoints.size === 0) {
+  results.push('FAIL 没能从 lib/client.js 解析出任何端点调用（正则失效？）')
+} else if (missingEndpoints.length > 0) {
+  results.push(`FAIL 客户端调用了 host 没有的端点：${missingEndpoints.join('、')}`)
+} else {
+  results.push(`OK   客户端调用的 ${calledEndpoints.size} 个端点 host 侧全部存在`)
+}
 
 console.log(results.join('\n'))
 const failed = results.filter((line) => line.startsWith('FAIL'))
