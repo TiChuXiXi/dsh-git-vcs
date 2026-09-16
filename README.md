@@ -8,8 +8,8 @@ Version Control 工具窗（`Alt+9`）与 Commit 工具窗（`Alt+0`）——本
 
 | 项目 | 值 |
 |------|-----|
-| 插件版本 | **`0.1.0`**（`package.json` 的 `version`，已发布到 npm：[dsh-git-vcs](https://www.npmjs.com/package/dsh-git-vcs)） |
-| 仓库 / Release | <https://github.com/TiChuXiXi/dsh-git-vcs>（tag `v0.1.0`） |
+| 插件版本 | **`0.1.1`**（`package.json` 的 `version`，已发布到 npm：[dsh-git-vcs](https://www.npmjs.com/package/dsh-git-vcs)） |
+| 仓库 / Release | <https://github.com/TiChuXiXi/dsh-git-vcs>（tag `v0.1.1`） |
 | npm 包名 / 插件行 id | `dsh-git-vcs` / `git-vcs` |
 | 兼容的 DeepSeek Harness | **`@deepseek-ai/dsh` ≥ `0.1.5-rc.1`**（写在 `package.json` 的 `dsh.engines.dsh`；开发与验证版本就是 `0.1.5-rc.1`） |
 | 依赖的官方插件 | `@deepseek-ai/dsh-client-ui-sidebar-right`（客户端半区 `dsh.client.inject` 声明；随 web-app 分发，本机为 `0.1.5-rc.2`） |
@@ -22,6 +22,13 @@ Version Control 工具窗（`Alt+9`）与 Commit 工具窗（`Alt+0`）——本
 > 最低版本取 `0.1.5-rc.1` 的原因：host 侧走「自己注册 `webServer` 前缀路由」这条通道，需要
 > `webServer` 与 `connection` 两个服务同时可注入（细节见文末「RPC 通道是怎么挂的」）。更低版本未验证；
 > 升级 DSH 后先跑一遍 `node scripts/verify-host.mjs`。
+
+### 更新记录
+
+| 版本 | 主要变化 |
+|------|----------|
+| **0.1.1** | 提交树覆盖**所有分支**并支持滚到底续拉（issue #1，`--all` + `--skip`，单页 50 / 上限 2000 行）；提交树从单轨画法改成**多泳道图**（对齐 `git log --graph` / IDEA，分叉与汇合画在真正的分叉提交上）；修掉两处真机几何错位（斜线层 SVG 高度按 viewBox 比例算成 100px、连线比圆点偏右 1px）；**目录不是仓库时整页换成居中空态 + 一键 `git init`**（issue #2，可选初始分支名）；新增真浏览器几何/空态自检 `scripts/dom-probe.mjs`（18 条断言）与「客户端调用的端点 host 侧都存在」的结构性断言 |
+| 0.1.0 | 首个发布版：右侧栏「版本管理」页（Local Changes / Log / Console / Branches / Remotes / Stash）、按文件勾选提交、推送与凭据兜底、自挂 `/git-vcs` RPC 路由 |
 
 ## 插件说明
 
@@ -89,7 +96,7 @@ dsh plugin --profile web add dsh-git-vcs
 dsh --profile web --dump-config | Select-String "dsh-git-vcs"   # 必须看到 "# == dsh-git-vcs" 层
 ```
 
-装具体版本用 `dsh plugin --profile web add dsh-git-vcs@0.1.0`（pnpm 对已存在的依赖会认为"已是最新"，
+装具体版本用 `dsh plugin --profile web add dsh-git-vcs@0.1.1`（pnpm 对已存在的依赖会认为"已是最新"，
 只有带 `@版本` 才替换 spec）。本机 registry 是 npmmirror，必要时加 `--registry=https://registry.npmjs.org`。
 
 ### 2. 本地路径安装（开发调试）
