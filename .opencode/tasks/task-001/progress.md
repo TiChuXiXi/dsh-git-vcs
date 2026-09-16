@@ -512,5 +512,34 @@
   图形改动要用参考实现对照）。
 - **生效方式**：纯浏览器半区改动 → 刷新页面即可（若浏览器缓存了旧 bundle，`Ctrl+Shift+R`；必要时重启 `dsh web`）。
 
+### 2026-09-16（真机截图量化定位：泳道图两处几何 bug + 新增真浏览器几何自检）
+
+- **用户反馈（附面板截图）**："分支线出来了，但是画的错位很多，前面莫名其妙的错误了两处，
+  并且现在分支线不居中了明显偏右，新分支开始的位置明显没有从节点开始画"。
+- **定位手段（关键）**：把用户截图按调色板颜色**逐像素扫描**（.NET `Bitmap.GetPixel`）：
+  - 蓝线（palette 0 = main）占 x=151-152，圆环（`#2563eb`）跨度 146-155 → **圆心 150.5、线心 152**：线比圆点偏右 1.5px；
+  - 紫线（palette 2 = test/tree-check）在 x=165-166（泳道间距 14 ✓）；
+  - 分叉行的紫色斜线从 y=223 一直画到 y=251 —— **整整一行高（29.5px）**，
+    而设计上它只该走行高的 32%（≈9px）。用行高与斜线跨度反推：SVG 的盒子高约 88–100px，是行高的 3 倍多。
+- **两个根因**：
+  1. **`<svg>` 是 replaced element**：只给 `left/top/right/bottom` 时高度是 auto，浏览器按 viewBox 的
+     **固有比例**算高度 —— `viewBox="0 0 28 100"` + 28px 宽 → **高度 100px**（`bottom` 被当过约束忽略）。
+     于是斜线纵向上被放大 3.4 倍，落到下面几行去。改成显式 `width:100%; height:100%`。
+  2. 2px 宽的连线 div 用 `left: 泳道中心`，而圆点圆心也在泳道中心 → **线心比圆心大 1px**。
+     改成 `left: 泳道中心 - 1`。
+- **新增真浏览器几何自检 `scripts/dom-probe.mjs`**：headless Chrome + 内联 React UMD + 真实
+  `lib/client.js` + 夹具（两条分支、一次分叉、一次合并），CDP 取 `getBoundingClientRect()` 断言 **7 条**：
+  行数、斜线层高度==行高、圆点/连线都落在泳道中线上、tip 上方不画线、分叉斜线 0→32% 且两端在两条泳道中心、
+  分出斜线 68%→行底。**反向验证**：把样式还原成 `right/bottom` 立刻报
+  `svg=100.0px 行=29.5px`、斜线终点偏 76px —— 与用户截图的现象完全对应。
+  （沙箱禁止命名管道，Chrome 的 mojo IPC 会 `FATAL platform_channel 拒绝访问`，需放宽权限/沙箱外跑；
+  缺浏览器或 React 时脚本自动跳过。React 装在 `.npm-cache/domprobe`。）
+- **顺带修**：`scripts/render-probe.mjs` 里按 `left === 泳道中心` 找线段的断言改用 `atLane()`（+1 还原线心），
+  并加 `dotAtLane()`；两个探针现在都是绿的。
+- **全量自检**：`verify-host.mjs` 49/49、`render-probe.mjs` 14/14、`render-probe.mjs --real` 16/16、
+  `dom-probe.mjs` 7/7、`preview-check.mjs` 全部通过。
+- **文档**：README 自检表加 `dom-probe.mjs`（含依赖与沙箱限制），"浏览器半区没有离线自检"那句改掉；
+  LESSONS 补三条（replaced element 高度陷阱、线心/圆心 1px、布局问题要用真浏览器探针）。
+
 
 

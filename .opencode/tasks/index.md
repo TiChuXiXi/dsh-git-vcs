@@ -7,7 +7,7 @@
 
 | 任务ID | 模块 | 状态 | 关联分支 | 最后更新 | 上下文入口 |
 |--------|------|------|---------|---------|-----------|
-| task-001 | Git 版本管理插件（右侧栏 tab + host RPC + IDEA 式 UI） | [**已发布 `dsh-git-vcs@0.1.0`**（npm + GitHub Release v0.1.0）；issue #1 的**数据源修复**（`--all` + 懒加载）与**多泳道提交树**（对齐 git --graph / IDEA）都在本地 `main`，**未发布、未推送**；profile 已切成本地 `link:D:/zxh/code/git-plugin` 做真机验收；自检 host 49/49 + 浏览器半区 14/14（`--real` 对照 15/15）。另：awesome PR #5154 等 09-16 12:19 UTC 的 regate 重跑] | main | 2026-09-16 | `.opencode/tasks/task-001/context.md` |
+| task-001 | Git 版本管理插件（右侧栏 tab + host RPC + IDEA 式 UI） | [**已发布 `dsh-git-vcs@0.1.0`**（npm + GitHub Release v0.1.0）；issue #1 的**数据源修复**（`--all` + 懒加载）、**多泳道提交树**（对齐 git --graph / IDEA）与**两处真机几何修复**（SVG 高度、线心偏心）都在本地 `main`，**未发布、未推送**；profile 已切成本地 `link:D:/zxh/code/git-plugin` 做真机验收；自检 host 49/49、浏览器半区 props 14/14 + `--real` 16/16 + **真浏览器几何 7/7**。另：awesome PR #5154 等 09-16 12:19 UTC 的 regate 重跑] | main | 2026-09-16 | `.opencode/tasks/task-001/context.md` |
 
 ## 快速查找规则
 

@@ -176,6 +176,13 @@ const verticalSegs = (cell) => findAll(cell, (node) => node.props?.style?.positi
 const diagonalSegs = (cell) => findAll(cell, (node) => node.props?.x1 !== undefined && node.props?.y1 !== undefined)
 /** 单元格里的圆点（12×12 的 svg）。 */
 const nodeDot = (cell) => find(cell, (node) => node.props?.width === 12 && node.props?.height === 12 && typeof node.props?.style?.left === 'string')
+/**
+ * 竖线段是否落在第 lane 条泳道的中线上。
+ * 线宽 2px，`left` 是**左边缘**（= 泳道中心 - 1），所以要 +1 还原成线心再比。
+ */
+const atLane = (node, lane) => Math.abs(parseFloat(node.props.style.left) + 1 - center(lane)) < 0.01
+/** 圆点的左边缘（= 泳道中心 - 6，12px 画布里的圆以 cx=6 居中）。 */
+const dotAtLane = (node, lane) => Math.abs(parseFloat(node.props.style.left) - (center(lane) - 6)) < 0.01
 
 /* ------------------------------------------------------------------ 夹具数据 */
 
@@ -336,8 +343,8 @@ if (logTab === null) {
     if (featureCell === null) return '没找到该行的提交树单元格'
     const dot = nodeDot(featureCell)
     if (dot === null) return '没找到圆点'
-    if (dot.props.style.left !== `${center(0) - 6}px`) return `圆点 left=${dot.props.style.left}，期望 ${center(0) - 6}px`
-    const up = verticalSegs(featureCell).find((node) => node.props.style.left === `${center(0)}px` && node.props.style.top === '-1px')
+    if (dotAtLane(dot, 0) === false) return `圆点 left=${dot.props.style.left}，期望 ${center(0) - 6}px`
+    const up = verticalSegs(featureCell).find((node) => atLane(node, 0) && node.props.style.top === '-1px')
     return up === undefined ? undefined : '分支 tip 上方还画了连线'
   })())
 
@@ -345,22 +352,22 @@ if (logTab === null) {
     if (mainCell === null) return '没找到该行的提交树单元格'
     const dot = nodeDot(mainCell)
     if (dot === null) return '没找到圆点'
-    if (dot.props.style.left !== `${center(1) - 6}px`) return `圆点 left=${dot.props.style.left}，期望 ${center(1) - 6}px`
-    const up = verticalSegs(mainCell).find((node) => node.props.style.left === `${center(1)}px` && node.props.style.top === '-1px')
+    if (dotAtLane(dot, 1) === false) return `圆点 left=${dot.props.style.left}，期望 ${center(1) - 6}px`
+    const up = verticalSegs(mainCell).find((node) => atLane(node, 1) && node.props.style.top === '-1px')
     if (up !== undefined) return 'main 的 tip 上方还画了连线'
     // 左泳道那条是 test 分支的直行线：它必须被画出来，否则两条分支看起来还是一条。
-    const through = verticalSegs(mainCell).find((node) => node.props.style.left === `${center(0)}px`)
+    const through = verticalSegs(mainCell).find((node) => atLane(node, 0))
     return through === undefined ? '左侧没有画 test 分支那条并行的线' : undefined
   })())
 
   ok('分叉之前两条泳道并行（左泳道是直行线，右泳道有圆点）', (() => {
     if (beforeForkCell === null) return '没找到分叉前一行的提交树单元格'
-    const through = verticalSegs(beforeForkCell).find((node) => node.props.style.left === `${center(0)}px`
+    const through = verticalSegs(beforeForkCell).find((node) => atLane(node, 0)
       && node.props.style.top === '-1px' && node.props.style.bottom === '-1px')
     if (through === undefined) return '左泳道没有直行线（看起来就像一条线而不是两条）'
     const dot = nodeDot(beforeForkCell)
     if (dot === null) return '没找到圆点'
-    return dot.props.style.left === `${center(1) - 6}px` ? undefined : `圆点 left=${dot.props.style.left}，期望落在第 2 条泳道`
+    return dotAtLane(dot, 1) ? undefined : `圆点 left=${dot.props.style.left}，期望落在第 2 条泳道`
   })())
 
   ok('分叉点画在真正分叉的那次提交上（斜线从第 2 条泳道汇入第 1 条）', (() => {
@@ -369,12 +376,12 @@ if (logTab === null) {
     if (line === undefined) return `没有从第 2 条泳道汇入第 1 条的斜线（斜线=${JSON.stringify(diagonalSegs(forkCell).map((node) => [node.props.x1, node.props.x2]))}）`
     if (line.props.y1 !== 0 || line.props.y2 !== 50 - NODE_EDGE_PCT) return `斜线纵向=${line.props.y1}→${line.props.y2}`
     const dot = nodeDot(forkCell)
-    return dot !== null && dot.props.style.left === `${center(0) - 6}px` ? undefined : '分叉提交的圆点没落在第 1 条泳道'
+    return dot !== null && dotAtLane(dot, 0) ? undefined : '分叉提交的圆点没落在第 1 条泳道'
   })())
 
   ok('分叉之后并成一条泳道（右泳道不再有线）', (() => {
     if (afterForkCell === null) return '没找到分叉后一行的提交树单元格'
-    const stray = verticalSegs(afterForkCell).find((node) => node.props.style.left === `${center(1)}px`)
+    const stray = verticalSegs(afterForkCell).find((node) => atLane(node, 1))
     if (stray !== undefined) return '分叉之后第 2 条泳道还在画线'
     return diagonalSegs(afterForkCell).length === 0 ? undefined : '分叉之后还画了斜线'
   })())
@@ -500,6 +507,7 @@ if (realAt !== -1) {
   } })
 
   realSource = realSnapshot
+  const dump = process.env.PROBE_DUMP === '1'
   const refresh = findButton(tree, 'Refresh')
   if (refresh === null) {
     ok('真实仓库对照：渲染真实提交树', '没找到 Refresh 按钮，无法切换到真实数据')
@@ -520,6 +528,16 @@ if (realAt !== -1) {
       if (lane !== expected) mismatches.push(`${String(row.props.key).slice(0, 7)} 我的泳道=${lane}，git=${expected}`)
       // 汇合斜线（y1 = 0 的那条）出现在哪一行，就是"分叉点画在哪一次提交上"。
       if (cell !== null && diagonalSegs(cell).some((line) => line.props.y1 === 0)) myForkRows.add(row.props.key)
+      if (dump === true && cell !== null) {
+        const verticals = verticalSegs(cell).map((node) => {
+          const s = node.props.style
+          const at = (parseFloat(s.left) + 1 - LANE_GAP / 2) / LANE_GAP
+          const kind = s.height !== undefined ? 'up' : (s.bottom !== undefined && s.top === '-1px' ? 'through/down' : 'other')
+          return `L${at}:${kind}(top=${s.top}${s.height === undefined ? '' : `,h=${s.height}`})`
+        })
+        const diagonals = diagonalSegs(cell).map((node) => `(${node.props.x1},${node.props.y1})→(${node.props.x2},${node.props.y2})`)
+        console.log(`  #${compared - 1} ${String(row.props.key).slice(0, 7)} lane=${lane} | ${verticals.join(' ')} | ${diagonals.join(' ')}`)
+      }
     }
     ok(`真实仓库 ${realDir}：${compared} 条提交的泳道与 git log --graph 一致`, (() => {
       if (compared === 0) return '一条都没对上（git 参考或渲染有问题）'

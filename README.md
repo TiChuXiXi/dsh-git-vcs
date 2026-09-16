@@ -371,13 +371,14 @@ Amend 语义是修补上一次提交，**忽略勾选**（按钮文案里已注�
 |------|------|
 | `node scripts\verify-host.mjs [仓库]` | 不需要挂 profile，直接在宿主域内跑全部 host 端点（真实 git、临时仓库）。覆盖解析结果、错误码门禁、`allowPush` 门禁、相对路径/非仓库拒绝、未跟踪文件 diff、勾选提交的 pathspec 回归、提交树覆盖所有分支 + `skip` 分页不串页等 **49 条断言** |
 | `node scripts\render-probe.mjs` | 浏览器半区的离线自检：本机没装 react，脚本自带一个迷你 React 把面板真挂起来，跑「打开仓库 → 切 Log → 滚到底续拉 → 刷新」，断言提交树渲染出其它分支独有的提交、**泳道拓扑**（tip 上方不画线、分支各有泳道、斜线画在真正的分叉提交上）、续拉按 hash 去重、刷新不缩回一页（**14 条断言**，视觉部分仍需真机目测） |
-| `node scripts\render-probe.mjs --real [仓库]` | 追加一条**与参考实现对照**的检查：把**真实仓库**的提交喂给同一份客户端代码渲染，再与 `git log --graph` 逐提交比对泳道下标（两边用同一批提交、同一顺序），不一致就报出来 |
+| `node scripts\render-probe.mjs --real [仓库]` | 追加**与参考实现对照**的检查：把**真实仓库**的提交喂给同一份客户端代码渲染，再与 `git log --graph` 逐提交比对泳道下标与分叉行位置（两边用同一批提交、同一顺序），不一致就报出来 |
+| `node scripts\dom-probe.mjs` | 浏览器半区的**真机几何自检**：起 headless Chrome/Edge 渲染真实 `lib/client.js`（夹具数据），通过 CDP 取回**渲染后的像素几何**，断言泳道竖线与圆点同心、斜线只占行高的 32%（分叉）/ 从 68% 到行底（合并）、斜线层高度等于行高（**7 条断言**）。先 `npm install --prefix .npm-cache/domprobe react@18.3.1 react-dom@18.3.1`；缺浏览器/React 会自动跳过。**沙箱禁止命名管道**（Chrome 的 mojo IPC 会直接 FATAL），需放宽权限或沙箱外运行 |
 | `node scripts\preview-check.mjs` | 在 `node:vm` 沙箱里装载真实 host 半区，按 host-runner 的 cloneJson 规则校验每个端点的信封是否无损 JSON，并确认 RPC 通道注册成功 |
 | `node scripts\status-probe.mjs [仓库]` | 用插件自己的 `status` / `diff` 读当前工作区，逐条打印 index/worktree 标记与三种 diff 长度——排查「列表说改了、差异却是空」 |
 | `node scripts\web-rpc-probe.mjs` | 在**隔离的 DSH_HOME** 里用完整 web 组合（base + web-app + 本插件）起临时实例（端口 3199），抓 host 日志并对 `/git-vcs` 做免认证探测：**401 = 路由在**（与 `/api` 一致）、**405 = 路由不在**（被静态兜底接手） |
 
-浏览器半区的**视觉**没有离线自检：配色、列宽拖拽、hover 高亮仍必须在真实 GUI 里加载后目测
-（数据流转由 `scripts\render-probe.mjs` 覆盖）。
+浏览器半区的**布局/视觉**由 `scripts\dom-probe.mjs` 用 headless 浏览器量像素来守（泳道几何、圆点同心、斜线跨度）；
+配色与列宽拖拽的手感仍需真机目测。**数据流转**由 `scripts\render-probe.mjs` 覆盖。
 
 **面板请求全部失败，报 `HTTP 405`**：说明 `/git-vcs` 路由没挂上——查启动日志里有没有
 `subprocess=就绪 connection=就绪` 与 `RPC 通道已注册：/git-vcs`。缺失的原因是插件行的 `inject`
