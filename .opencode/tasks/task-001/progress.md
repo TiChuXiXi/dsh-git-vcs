@@ -615,5 +615,33 @@
 - **真机生效前提**：host 与客户端两个半区都改了 → 需要**重启 `dsh web`**（host 半区）+ 页面强制刷新
   （客户端半区）；只刷新页面的话 host 还是旧键名，按钮依旧没反应。
 
+## 2026-09-16 · 发布 v0.1.1（用户指令："修改版本号为0.1.1，推送并发布"）
+
+- **版本**：`package.json` `0.1.0` → **`0.1.1`**；README 版本表 / 安装命令（`add dsh-git-vcs@0.1.1`）
+  同步更新，并在「版本与兼容性」下新增 **「更新记录」** 小节（0.1.1 / 0.1.0 两行）。
+- **提交**：`c7e5ca0 chore(release): 0.1.1`（仅 package.json + README.md）。
+- **推送**：`main` `8349fa3..c7e5ca0`（schannel 坏 → `-c http.sslBackend=openssl` + 仓库级
+  `http.proxy=http://127.0.0.1:7890` + 内嵌 `GH_TOKEN`）；annotated tag `v0.1.1` 一并推送。
+  `git ls-remote` 复核：`refs/heads/main` 与 `refs/tags/v0.1.1^{}` 都指向 `c7e5ca0`。
+  （注：那条 push 命令 PowerShell 报了 `[exit code: 1]`，但 ls-remote 与远端日志都确认已推上去，
+  属于误报，别被它误导。）
+- **npm 发布**：`npm publish --registry https://registry.npmjs.org --cache .npm-cache/_npmtmp`
+  （项目级 `.npmrc` 里的 `${NPM_TOKEN}`，从 User 注册表读进 `$env:NPM_TOKEN`）。
+  包内 6 个文件（LICENSE / README.md / cordis.patch.yml / index.js / lib/client.js / package.json），
+  77.8 kB，没有 `.npmrc`、没有多余文件。**发布后约 40 秒 registry 才可见**（前两次直接查
+  `registry.npmjs.org/dsh-git-vcs/0.1.1` 是 404，第三次 200）——`npm view` 当时还显示 0.1.0，
+  不能据此判失败。
+- **发布物核对**：新增 `.npm-cache/verify-publish.mjs`（下载 tarball → 纯 Node 解 gzip/tar →
+  逐文件 sha256 对比本地源码）。结果：package.json / index.js / README.md / cordis.patch.yml /
+  lib/client.js **全部一致**，包内 version=0.1.1，无多余文件。
+  （`tar` 在本机沙箱里 `spawnSync tar EPERM`，所以解包用 zlib 手写，不调外部命令。）
+- **GitHub Release**：`https://github.com/TiChuXiXi/dsh-git-vcs/releases/tag/v0.1.1`
+  （draft=false、prerelease=false，页面 HTTP 200；正文覆盖 issue #1 提交树、issue #2 一键 init、
+  两处几何修复与自检表）。用 `.npm-cache/create-release.mjs`（Node fetch，绕开坏掉的 schannel），
+  带失败重试一次。
+- **profile 未动**：仍是 `link:D:/zxh/code/git-plugin`（本地开发用）。发布物与本地源码逐字节一致，
+  所以正在跑的面板等于 0.1.1；切线上版本用
+  `dsh plugin --profile web add dsh-git-vcs@0.1.1`（需要放宽权限写 `~/.dsh/profiles/web`）。
+
 
 

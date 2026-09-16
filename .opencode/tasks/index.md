@@ -7,7 +7,7 @@
 
 | 任务ID | 模块 | 状态 | 关联分支 | 最后更新 | 上下文入口 |
 |--------|------|------|---------|---------|-----------|
-| task-001 | Git 版本管理插件（右侧栏 tab + host RPC + IDEA 式 UI） | [**已发布 `dsh-git-vcs@0.1.0`**（npm + GitHub Release v0.1.0）；本地 `main` 上另有**未发布**的：issue #1 数据源修复（`--all` + 懒加载）、多泳道提交树（对齐 git --graph / IDEA）、两处真机几何修复（SVG 高度、线心偏心）、**issue #2 一键 init 空态**（非仓库时整页居中空态 + 分支名选择 + `repo/init`）；profile 已切成本地 `link:D:/zxh/code/git-plugin` 做真机验收；自检 host **64/64**（含"客户端调用的端点 host 侧都存在"反查）、浏览器半区 props 14/14 + `--real` 16/16 + **真浏览器几何/空态 18/18**。另：awesome PR #5154 等 09-16 12:19 UTC 的 regate 重跑] | main | 2026-09-16 | `.opencode/tasks/task-001/context.md` |
+| task-001 | Git 版本管理插件（右侧栏 tab + host RPC + IDEA 式 UI） | [**已发布 `dsh-git-vcs@0.1.1`**（npm `latest` + GitHub Release + tag `v0.1.1`，仓库 `main` = `c7e5ca0`）：含 issue #1 提交树覆盖所有分支 + 滚底续拉 + 多泳道图、两处真机几何修复（SVG 高度 / 线心偏心）、issue #2 非仓库整页空态 + 一键 `repo/init`（可选初始分支名）；发布物已用 `.npm-cache/verify-publish.mjs` 逐文件 sha256 核对与本地源码一致；profile 仍为本地 `link:D:/zxh/code/git-plugin`（等价 0.1.1）；自检 host **64/64**（含端点反查）、浏览器半区 props 14/14 + `--real` 16/16 + **真浏览器几何/空态 18/18**。另：awesome PR #5154 等 09-16 12:19 UTC 的 regate 重跑] | main | 2026-09-16 | `.opencode/tasks/task-001/context.md` |
 
 ## 快速查找规则
 
