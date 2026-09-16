@@ -444,11 +444,41 @@
 4. **文档**：README 的 Log 章节加「范围与懒加载」小节（含为什么不用 topo/date 排序），
    已知限制里删掉「历史只列当前分支」，RPC 表的 `repo/snapshot` / `log` 行补上新参数。
 
-**待办**：版本未 bump（仍是 `0.1.0`），本次修复只落在本地 `main`（commit `0a27c0a`）。
-用户明确选择**先不推送、先不发布**（"只留本地提交"），因此 issue #1 也先不回复/不关闭 ——
-要让真机面板吃到修复，需要发 `0.1.1`（npm + GitHub Release）并把 profile 切到新版本，
-或临时把 profile 切回本地目录（`dsh plugin --profile web add link:D:/zxh/code/git-plugin`）。
-恢复这条线索时先问用户，不要自行 push / publish。
+**待办**：版本未 bump（仍是 `0.1.0`），本次修复只落在本地 `main`（commit `0af5be2`）。
+用户明确选择**先不推送、先不发布**（"只留本地提交"），因此 issue #1 也先不回复/不关闭。
+真机验收改走本地 link（见下节）。
+
+### 2026-09-16（profile 切回本地目录，用真机测试 issue #1 的修复）
+
+- **操作**：`dsh plugin --profile web add link:D:/zxh/code/git-plugin`（沙箱先拒一次 EPERM，
+  提权 `danger-full-access` 后成功；改动前把 profile 的 `package.json` / `pnpm-lock.yaml`
+  备份到 `.npm-cache/profile-*.before-local.*`）。输出 `Packages: -1`（卸掉 npm 的 0.1.0）。
+- **验证**：profile `dependencies` 变成 `"dsh-git-vcs": "link:D:/zxh/code/git-plugin"`；
+  `node_modules/dsh-git-vcs` 是 **Junction → D:\zxh\code\git-plugin**；通过安装路径读到的
+  `index.js` 有 `logArgs` / `LOG_LIMIT_MAX`、`lib/client.js` 有 `loadMoreLog` / `LOG_MAX_ROWS`
+  （即修复已在生效路径上）；`import()` 安装副本得到 `name=git-vcs` /
+  `inject=[subprocess, connection, webServer]` / `apply=function`；
+  `dsh --profile web --dump-config`（同样需提权）确认组合里仍有 `- id: git-vcs` 行且
+  `allowPush: true` —— dsh 认这个 junction 的 `dsh.bundle`（LESSONS 里"坏 junction →
+  declares no dsh.bundle"的坑没有复现）。
+- **生效方式**：重启 `dsh web`（host 半区）+ 刷新页面（浏览器半区）。改本地代码即时生效，
+  不再需要发版。
+- **回退**：`dsh plugin --profile web add dsh-git-vcs@0.1.0`（必须带版本号）。
+
+### 2026-09-16（awesome PR #5154 的 gate 为什么还没转绿）
+
+- 后台 watcher 跑满 3 小时仍全 failure，查 `regate.yml` 源码得到确切原因：
+  重跑条件之一是 `aged`，要求 gate 的 failure summary 命中 `days old`（我们命中）
+  **且距上次 verdict ≥ 24 小时**（`Date.now() - ranAt >= 24h`）。我们的 gate 是
+  **2026-09-15T10:10:12Z** 跑的（当时仓库 22.97h，不足 1 天），24h 冷却要到
+  **2026-09-16T10:10:12Z** 才满；cron 是 `19 */6 * * *`，即 **09-16 12:19 UTC 那一趟**才会
+  重跑 PR check 并重新触发 gate。**不需要 push、不需要关闭重开**（gate 文案里的
+  "should clear in about 2h" 只指年龄达标，没算 regate 的 24h 冷却）。
+- 该 PR 至今无 label、`updated_at` 停在 09-15T10:11:55Z，`mergeable_state=unstable`（就是那条红线）。
+- 诊断脚本都在 `.npm-cache/`（已 gitignore）：`check-issues.mjs`（issue 抓取）、
+  `gate-now.mjs`（gate 详情）、`watch-gate.mjs`（轮询）。
+
+**待办（下一轮）**：issue #1 的真机验收结果；PR #5154 在 09-16 12:19 UTC 之后是否转绿。
 
 
 

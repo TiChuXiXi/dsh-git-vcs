@@ -7,7 +7,7 @@
 
 | 任务ID | 模块 | 状态 | 关联分支 | 最后更新 | 上下文入口 |
 |--------|------|------|---------|---------|-----------|
-| task-001 | Git 版本管理插件（右侧栏 tab + host RPC + IDEA 式 UI） | [**已发布 `dsh-git-vcs@0.1.0`**（npm + GitHub Release v0.1.0），profile 已从 link 切到 registry；真机提交/推送验收通过；自检 49/49 + 浏览器半区 9/9。**main 上已有未发布修复**：issue #1 提交树覆盖所有分支 + 懒加载（待发 0.1.1）] | main | 2026-09-15 | `.opencode/tasks/task-001/context.md` |
+| task-001 | Git 版本管理插件（右侧栏 tab + host RPC + IDEA 式 UI） | [**已发布 `dsh-git-vcs@0.1.0`**（npm + GitHub Release v0.1.0）；issue #1 修复已在本地 `main`（commit `0af5be2`）**未发布**；profile 已切成本地 `link:D:/zxh/code/git-plugin` 做真机验收；自检 49/49 + 浏览器半区 9/9。另：awesome PR #5154 等 09-16 12:19 UTC 的 regate 重跑] | main | 2026-09-16 | `.opencode/tasks/task-001/context.md` |
 
 ## 快速查找规则
 
