@@ -84,7 +84,6 @@ Version Control 工具窗（`Alt+9`）与 Commit 工具窗（`Alt+0`）——本
 | `push` | 推送：直推 → SSL 后端兜底 → 认证兜底 | push |
 | `credential/approve` | 把用户名/密码（Token）存进 git 凭据助手 | write |
 | `discard` / `revert` / `reset` / `cherry-pick` / `remote/remove` | 丢弃改动、回滚提交、重置、拣选、删远程 | dangerous（`remote/remove` 为 write） |
-| `init` | `git init`（host 已实现，面板暂无入口） | write |
 
 ## 安装
 
@@ -98,6 +97,41 @@ dsh --profile web --dump-config | Select-String "dsh-git-vcs"   # 必须看到 "
 
 装具体版本用 `dsh plugin --profile web add dsh-git-vcs@0.1.1`（pnpm 对已存在的依赖会认为"已是最新"，
 只有带 `@版本` 才替换 spec）。本机 registry 是 npmmirror，必要时加 `--registry=https://registry.npmjs.org`。
+
+### 更新到新版本
+
+已装过旧版本时，用下面任意一条（`@latest` 最省事，写死版本最可控）：
+
+```powershell
+dsh plugin --profile web add dsh-git-vcs@latest        # 或 dsh-git-vcs@0.1.2 这种具体版本
+dsh --profile web --dump-config | Select-String "dsh-git-vcs"   # 仍应看到 "# == dsh-git-vcs" 层
+```
+
+然后**重启 `dsh web`**（host 半区是进程内代码），浏览器里再 `Ctrl+Shift+R`。
+
+先看自己当前是哪一种 spec，能省一次试错：
+
+```powershell
+$p = "$env:USERPROFILE\.dsh\profiles\web"
+(Get-Content "$p\package.json" -Raw | ConvertFrom-Json).dependencies.'dsh-git-vcs'
+(Get-Content "$p\node_modules\dsh-git-vcs\package.json" -Raw | ConvertFrom-Json).version
+```
+
+| 当前 spec | 命令 | 结果 |
+|-----------|------|------|
+| 任意（`0.1.0` 精确 / `^0.1.0`） | `add dsh-git-vcs@latest` 或 `@<版本>` | ✅ 升级，spec 一并改写 |
+| `^0.1.0`（当初用裸 `add dsh-git-vcs` 装的） | `update dsh-git-vcs` | ✅ 升到 0.1.1 |
+| `0.1.0`（当初用 `add dsh-git-vcs@0.1.0` 装的） | `update dsh-git-vcs` | ❌ 精确 spec 下 pnpm 不动它 |
+| 同上 | `add dsh-git-vcs`（不带版本） | ❌ 「已满足」→ 仍停在旧版本 |
+
+其它注意点：
+
+- 命令别在插件源码目录里跑：那里的项目级 `.npmrc` 用 `${NPM_TOKEN}`，未设该变量时 pnpm 会警告
+  `Failed to replace env in config`（无害，但吵）。
+- npmmirror 会滞后几分钟到几小时；`npm view dsh-git-vcs version --registry https://registry.npmmirror.com`
+  还看不到新版本时，加 `--registry=https://registry.npmjs.org` 直接走官方源。
+- 当初若是**本地路径**装的（`link:…`），同一条 `add dsh-git-vcs@<版本>` 会把它换成 registry 版本。
+- `dsh.profile.bundles` 里已经有 `dsh-git-vcs`，更新不需要再动它。
 
 ### 2. 本地路径安装（开发调试）
 
