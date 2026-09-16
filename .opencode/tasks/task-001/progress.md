@@ -2,8 +2,8 @@
 
 ## 当前状态
 
-- **状态**: 动态版全部改进已同步回源码，静态校验 + host 自检全绿；仍待跨盘符安装与真机 UI 验证
-- **最后操作日期**: 2026-09-14
+- **状态**: 本地源码为最新（issue #1 数据源 + 多泳道提交树 + 几何修复 + issue #2 一键 init 空态都已落源码并自检全绿）；**未推送、未发布**（版本仍 0.1.0）
+- **最后操作日期**: 2026-09-16
 
 ## 任务清单
 
@@ -540,6 +540,47 @@
   `dom-probe.mjs` 7/7、`preview-check.mjs` 全部通过。
 - **文档**：README 自检表加 `dom-probe.mjs`（含依赖与沙箱限制），"浏览器半区没有离线自检"那句改掉；
   LESSONS 补三条（replaced element 高度陷阱、线心/圆心 1px、布局问题要用真浏览器探针）。
+
+## 2026-09-16 · issue #2「缺少初始化git仓库」：非仓库整页空态 + 一键 init
+
+- **用户诉求（原话）**："我的想法是做的用户体验好一些，没有初始化仓库时就不要显示当前插件的这些功能内容了，
+  直接就一个居中的按钮和提示，按钮点击就是帮助用户在当前目录下初始化仓库，初始化成功完成后再显示当前的这些若干功能"。
+- **先更正上一轮的错判**：上一轮我说"host 侧没有任何 init 入口"是**错的**（用带引号的正则
+  `'(snapshot|log|…)'\(` 扫方法表，漏掉了不带引号的 `async init(`）——`index.js` 里早有 `init`，
+  README 也写着"host 侧已实现但面板没有入口"。本轮把它补全并接到 UI 上。
+- **host（`index.js`）**：
+  - 从 `ensureWorkdir` 拆出 `validateCwd()`（绝对路径 / 存在 / 是目录 / `repoRoot` 白名单），
+    `repo/init` 复用 —— 修掉"init 能绕过 repoRoot 围栏、在允许范围外写 `.git`"的漏洞；
+  - `init` 三分支：不是仓库 → `git init -b <branch>`（git < 2.28 无 `-b` 时退回 `init` + `symbolic-ref HEAD`）；
+    已是仓库根 → `already: true` 不重复初始化；仓库内子目录 → `git-vcs/bad-request` 拒绝嵌套仓库；
+  - 嵌套判定改用 `git rev-parse --show-prefix`（空串=就是根）：拿 `--show-toplevel` 和 cwd 比字符串在
+    Windows 上必然不等（正/反斜杠），会把**自己的仓库根**误判成嵌套；
+  - 初始分支名：入参 → `git config init.defaultBranch` → `main`（用 `check-ref-format --branch` 校验）；
+  - `parseStatus` 把未出生分支的 `branch.oid === '(initial)'` 归一成空串 + `unborn: true`
+    （否则 `shortHead` 会变成假哈希 `(initia`）。
+- **浏览器半区（`lib/client.js`）**：
+  - `repo/snapshot` 回 `git-vcs/not-a-repo` 时置 `noRepo`，**不再弹 toast**（整页已经说明原因）；
+  - 渲染改成二选一：`noRepo === true ? renderNoRepo() : <正常面板>`（分支栏 / 工具栏 / 六个页签 /
+    提交树全部不渲染），只保留顶部路径栏（否则连换个目录都换不了）；
+  - `renderNoRepo()`：居中 Git 图标 + 「当前目录不是 Git 仓库」+ 目录路径 + 唯一的
+    「在当前目录初始化 Git 仓库」按钮（`allowWrite=false` 时置灰并说明）+ 一行提示；
+  - `initRepo()`：调 `repo/init` → `setNoRepo(false)` → 自己 `refresh()` 把面板长回来 → toast 报分支名；
+  - 顺手：`Btn` 支持 `style` 覆盖；「打开仓库」在路径未变时改为踢一次 `tick`（原先 setApplied
+    同值不触发 effect，点了没反应）。
+- **自检**：
+  - `verify-host.mjs` 49 → **63 条**（新增 issue #2 回归 14 条：非仓库回 not-a-repo、建仓库、
+    `.git` 存在、HEAD 指向、init 后 snapshot 立即可用、重复 init 幂等、指定分支生效、
+    非法/`-` 开头分支名被拒、已有仓库根 already、嵌套拒绝且不留 `.git`、`allowWrite=false` 门禁）；
+  - `dom-probe.mjs` 7 → **15 条**：新增第二种页面模式（夹具让 `repo/snapshot` 回 not-a-repo、
+    `repo/init` 成功），断言非仓库时**功能内容一条都不渲染**、空态块铺满路径栏以下空间、
+    按钮与提示同一中轴、点击后真的调了一次 `repo/init` 且面板自己长回来；
+  - 反向验证探针有效：把 `noRepo === true` 临时改成 `false` → 立刻报
+    「仍然渲染了：Refresh、Push、Local Changes、Log、Console、Branches、Remotes、Stash」等 6 条 FAIL；
+  - 全绿：verify-host 63/63、render-probe 14/14、`--real` 16/16、dom-probe 15/15、preview-check 全通过。
+- **文档**：README 新增「目录还不是 Git 仓库时」小节（含三种目录状态的行为表）、RPC 表加 `repo/init`、
+  「提供什么」加一条、已知限制去掉"面板没有入口"改为"不会顺带建 .gitignore/首次提交"、
+  自检表更新为 63/15 条；LESSONS 补 5 条（Windows 路径比较、未出生分支/`(initial)`、空态 UX 规则、
+  探针夹具参数顺序、正则漏匹配导致错误结论）。
 
 
 

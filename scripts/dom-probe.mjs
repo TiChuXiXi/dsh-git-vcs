@@ -76,7 +76,24 @@ const value = {
   status: { branch: { oid: commits[2].hash, head: 'main', upstream: '', ahead: 0, behind: 0, detached: false }, entries: [] },
   commits, branches, stashes: [], console: [],
 }
-const call = async () => ({ ok: true, value })
+window.__initCalls = 0
+window.__inited = false
+// mode = 'no-repo'：先让 repo/snapshot 回 not-a-repo（面板该走空态），repo/init 成功后恢复正常。
+// 注意实参顺序：客户端拿到的 face.call 已经闭包了 CHANNEL，它转手调
+// ctx.connection.rpc.call(CHANNEL, endpoint, payload) —— 所以这层的第一个参数是 channel。
+const call = async (channel, endpoint) => {
+  if (window.__mode === 'no-repo') {
+    if (endpoint === 'repo/init') {
+      window.__initCalls += 1
+      window.__inited = true
+      return { ok: true, value: { root: 'D:/fixture', branch: 'main', already: false, message: 'Initialized empty Git repository in D:/fixture/.git/' } }
+    }
+    if (window.__inited !== true) {
+      return { ok: false, error: { code: 'git-vcs/not-a-repo', message: '不是 git 仓库：D:/fixture', details: { cwd: 'D:/fixture' } } }
+    }
+  }
+  return { ok: true, value }
+}
 `
 
 const pageScript = `
@@ -100,16 +117,43 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
   ...face(),
   useSessions: () => ({ current: 's1', byId: { s1: { cwd: 'D:/fixture' } } }),
 }))
-await wait(600)
-const logTab = [...document.querySelectorAll('button')].find((node) => node.textContent === 'Log')
-if (logTab === undefined) return { error: '没找到 Log 页签按钮' }
-logTab.click()
-await wait(400)
+await wait(700)
 
 const rect = (node) => {
   const box = node.getBoundingClientRect()
   return { top: box.top, bottom: box.bottom, left: box.left, right: box.right, width: box.width, height: box.height }
 }
+const buttonTexts = () => [...document.querySelectorAll('button')].map((node) => (node.textContent || '').trim())
+const panelBox = () => rect(document.getElementById('root').firstElementChild)
+
+/* ---------------------------------------------------------- 未初始化仓库：整页空态 */
+if (window.__mode === 'no-repo') {
+  const rootEl = document.getElementById('root').firstElementChild
+  const emptyWrap = [...rootEl.children].find((node) => (node.textContent || '').includes('不是 Git 仓库'))
+  const initBtn = emptyWrap === undefined ? null : [...emptyWrap.querySelectorAll('button')].find((node) => (node.textContent || '').includes('初始化'))
+  const before = {
+    tabs: buttonTexts(),
+    emptyText: emptyWrap === undefined ? '' : (emptyWrap.textContent || ''),
+    emptyBox: emptyWrap === undefined ? null : rect(emptyWrap),
+    panelBox: panelBox(),
+    pathBarBox: rootEl.children.length === 0 ? null : rect(rootEl.children[0]),
+    emptyButtons: emptyWrap === undefined ? -1 : emptyWrap.querySelectorAll('button').length,
+    initBox: initBtn === null ? null : rect(initBtn),
+    graphRows: [...document.querySelectorAll('div[title]')].filter((row) => row.querySelector('svg[width="12"]') !== null).length,
+  }
+  if (initBtn !== null) { initBtn.click(); await wait(800) }
+  return {
+    before,
+    after: { tabs: buttonTexts(), emptyGone: [...rootEl.children].some((node) => (node.textContent || '').includes('不是 Git 仓库')) === false, initCalls: window.__initCalls },
+  }
+}
+
+/* ------------------------------------------------------------ 有仓库：提交树几何 */
+const logTab = [...document.querySelectorAll('button')].find((node) => node.textContent === 'Log')
+if (logTab === undefined) return { error: '没找到 Log 页签按钮' }
+logTab.click()
+await wait(400)
+
 const rows = []
 for (const row of document.querySelectorAll('div[title]')) {
   // 提交行的标志：行样式带 cursor: pointer **且**含 12px 的圆点 SVG
@@ -138,35 +182,46 @@ return { rows, bodyText: document.body.innerText.slice(0, 200) }
 /* ------------------------------------------------------------------ 页面 + 浏览器 */
 
 mkdirSync(SCRATCH, { recursive: true })
-const pagePath = join(SCRATCH, 'harness.html')
-writeFileSync(pagePath, [
-  '<!doctype html><html><head><meta charset="utf-8">',
-  '<style>html,body{margin:0;padding:0;font:12px/1.5 sans-serif;background:#fff} #root{width:760px}</style>',
-  '</head><body><div id="root"></div>',
-  '<script>window.__ModuleLoader__ = { load: (spec) => { window.__entry = spec } }</script>',
-  `<script>${readFileSync(react, 'utf8')}</script>`,
-  `<script>${readFileSync(reactDom, 'utf8')}</script>`,
-  `<script>${readFileSync(CLIENT, 'utf8')}</script>`,
-  `<script>${fixture}</script>`,
-  `<script>window.__probe = (async () => { try { ${pageScript} } catch (cause) { return { error: String((cause && cause.stack) || cause) } } })()</script>`,
-  '</body></html>',
-].join('\n'), 'utf8')
 
-const child = spawn(browser, [
-  '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-extensions',
-  '--mute-audio', `--remote-debugging-port=${PORT}`, `--user-data-dir=${join(SCRATCH, 'profile')}`,
-  `file:///${pagePath.replace(/\\/g, '/')}`,
-], { stdio: 'ignore', windowsHide: true })
+/** 跑一次页面（mode = 'normal' | 'no-repo'），返回页面里探针的返回值。 */
+async function runProbe(mode, port) {
+  const pagePath = join(SCRATCH, `harness-${mode}.html`)
+  writeFileSync(pagePath, [
+    '<!doctype html><html><head><meta charset="utf-8">',
+    // #root 给固定高度：面板本来就是撑满侧栏的，而且空态的"垂直居中"只有给了高度才测得出来。
+    '<style>html,body{margin:0;padding:0;font:12px/1.5 sans-serif;background:#fff} #root{width:760px;height:600px}</style>',
+    '</head><body><div id="root"></div>',
+    '<script>window.__ModuleLoader__ = { load: (spec) => { window.__entry = spec } }</script>',
+    `<script>${readFileSync(react, 'utf8')}</script>`,
+    `<script>${readFileSync(reactDom, 'utf8')}</script>`,
+    `<script>${readFileSync(CLIENT, 'utf8')}</script>`,
+    `<script>window.__mode = ${JSON.stringify(mode)}</script>`,
+    `<script>${fixture}</script>`,
+    `<script>window.__probe = (async () => { try { ${pageScript} } catch (cause) { return { error: String((cause && cause.stack) || cause) } } })()</script>`,
+    '</body></html>',
+  ].join('\n'), 'utf8')
+
+  const child = spawn(browser, [
+    '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-extensions',
+    '--mute-audio', `--remote-debugging-port=${port}`, `--user-data-dir=${join(SCRATCH, `profile-${mode}`)}`,
+    `file:///${pagePath.replace(/\\/g, '/')}`,
+  ], { stdio: 'ignore', windowsHide: true })
+  try {
+    return await readProbe(port, `harness-${mode}.html`)
+  } finally {
+    child.kill()
+  }
+}
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms))
 
 /** 等页面里的探针 promise 出结果；期间轮询 CDP 的页面 target。 */
-async function readProbe() {
+async function readProbe(port, page) {
   let lastError = 'CDP 没有响应'
   for (let attempt = 0; attempt < 60; attempt += 1) {
     try {
-      const list = await fetch(`http://127.0.0.1:${PORT}/json/list`).then((response) => response.json())
-      const target = list.find((item) => item.type === 'page' && String(item.url).includes('harness.html'))
+      const list = await fetch(`http://127.0.0.1:${port}/json/list`).then((response) => response.json())
+      const target = list.find((item) => item.type === 'page' && String(item.url).includes(page))
       if (target !== undefined) {
         const value = await evaluate(target.webSocketDebuggerUrl, 'window.__probe', true)
         if (value !== undefined) return value
@@ -222,12 +277,8 @@ function evaluate(webSocketDebuggerUrl, expression, awaitPromise) {
   })
 }
 
-let measured = { error: '没有跑起来' }
-try {
-  measured = await readProbe()
-} finally {
-  child.kill()
-}
+const measured = await runProbe('normal', PORT)
+const emptyCase = await runProbe('no-repo', PORT + 1)
 
 /* ------------------------------------------------------------------ 断言 */
 
@@ -306,6 +357,51 @@ if (measured.error !== undefined) {
     if (near(line.bottom, merge.row.bottom, 2.5) === false) problems.push(`终点 y=${line.bottom.toFixed(1)}，期望行底 ${merge.row.bottom.toFixed(1)}`)
     ok('分出斜线从行下半段起始、落到行底', problems.length === 0 ? undefined : problems.join('；'))
   }
+}
+
+/* ---------------------------------------- 未初始化仓库的空态（issue #2 的硬要求）
+ * 要求：非仓库时**不显示任何功能内容**（页签 / 提交树 / 工具栏都不出现），只有一块居中的
+ * 提示 + 一个按钮；点下去初始化成功后，功能面板要自己长回来。
+ */
+if (emptyCase.error !== undefined) {
+  ok('未初始化仓库：空态探针执行', emptyCase.error)
+} else {
+  const before = emptyCase.before
+  const after = emptyCase.after
+  const FEATURES = ['Local Changes', 'Log', 'Console', 'Branches', 'Remotes', 'Stash']
+  const leaked = before.tabs.filter((text) => FEATURES.includes(text) || text === 'Refresh' || text === 'Push')
+  ok('非仓库时不渲染任何功能内容（页签 / 工具栏都不在）', leaked.length === 0 ? undefined : `仍然渲染了：${leaked.join('、')}`)
+  ok('非仓库时提交树一行都不渲染', before.graphRows === 0 ? undefined : `提交树出现 ${before.graphRows} 行`)
+  ok('空态里有仓库路径提示', before.emptyText.includes('不是 Git 仓库') && before.emptyText.includes('D:/fixture')
+    ? undefined
+    : `空态文案=${JSON.stringify(before.emptyText.slice(0, 120))}`)
+  ok('空态里只有一个按钮（初始化）', before.emptyButtons === 1 && before.initBox !== null ? undefined : `按钮数=${before.emptyButtons}`)
+
+  // 铺满：空态块必须横向占满面板、纵向吃掉路径栏以下的全部空间（flex:1 掉了就会缩成左上角一条）。
+  if (before.emptyBox === null || before.pathBarBox === null) {
+    ok('空态块铺满路径栏以下的全部空间', '没找到空态块 / 路径栏')
+  } else {
+    const panel = before.panelBox
+    const area = before.emptyBox
+    const problems = []
+    if (Math.abs(area.left - panel.left) > 2 || Math.abs(area.right - panel.right) > 2) {
+      problems.push(`横向没铺满（块 ${area.left.toFixed(1)}~${area.right.toFixed(1)}，面板 ${panel.left.toFixed(1)}~${panel.right.toFixed(1)}）`)
+    }
+    if (Math.abs(area.top - before.pathBarBox.bottom) > 2) problems.push(`顶边 ${area.top.toFixed(1)}，期望贴着路径栏底 ${before.pathBarBox.bottom.toFixed(1)}`)
+    if (Math.abs(area.bottom - panel.bottom) > 2) problems.push(`底边 ${area.bottom.toFixed(1)}，期望面板底 ${panel.bottom.toFixed(1)}`)
+    ok('空态块铺满路径栏以下的全部空间（内容在其中居中）', problems.length === 0 ? undefined : problems.join('；'))
+    // 按钮自己也必须在空态块的水平中线上
+    if (before.initBox !== null) {
+      const bx = (before.initBox.left + before.initBox.right) / 2 - (area.left + area.right) / 2
+      ok('初始化按钮与提示同一中轴', Math.abs(bx) <= 2 ? undefined : `按钮偏 ${bx.toFixed(1)}px`)
+    }
+  }
+
+  ok('点击初始化后调用了一次 repo/init', after.initCalls === 1 ? undefined : `调用次数=${after.initCalls}`)
+  ok('初始化成功后空态消失、功能面板自己长回来', after.emptyGone === true && before.emptyButtons === 1
+    && FEATURES.every((text) => after.tabs.includes(text)) && after.tabs.includes('Refresh')
+    ? undefined
+    : `点之前空态按钮数=${before.emptyButtons}、点之后空态消失=${after.emptyGone}，页签=${JSON.stringify(after.tabs)}`)
 }
 
 console.log(results.join('\n'))

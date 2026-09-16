@@ -32,6 +32,7 @@ Version Control 工具窗（`Alt+9`）与 Commit 工具窗（`Alt+0`）——本
   （右侧栏的停靠面与 header 展开控件）提供，本插件不碰布局。
 - **一条 host RPC 通道** `/git-vcs`（29 个端点，见下表）：所有 git 调用都在 host 进程里以 argv 形式执行。
 - **六页功能**：Local Changes / Log / Console / Branches / Remotes / Stash。
+- **目录不是仓库时**：整页换成居中的空态 + 「在当前目录初始化 Git 仓库」按钮（`repo/init`）。
 
 ### 形态与文件
 
@@ -58,6 +59,7 @@ Version Control 工具窗（`Alt+9`）与 Commit 工具窗（`Alt+0`）——本
 |------|------|------|
 | `repo/info` | 仓库根、分支、upstream、ahead/behind、git 版本、`remote.origin.url`、插件配置回显 | — |
 | `repo/snapshot` | 一次刷新所需的全部数据（status + log + 本地/远程分支 + stash + 版本 + remote），host 侧并发探测；`all: true` 时提交列表覆盖所有分支 | — |
+| `repo/init` | 把目录初始化为 git 仓库（初始分支名可传 `branch`）；已是仓库根返回 `already: true`，仓库内子目录直接拒绝 | write |
 | `status` | `git status --porcelain=v2` → 按「冲突 / 已暂存 / 已修改 / 未跟踪」分组 | — |
 | `diff` | 单文件统一 diff；`staged` 取 index、`untracked` 走 `--no-index`、其余取工作区 | — |
 | `log` | 提交列表（`limit` / `skip` 分页、`all` 覆盖所有分支、可按 `branch` / `path` 过滤） | — |
@@ -146,6 +148,21 @@ cmd /c rmdir "$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-git-vcs"
 
 右侧栏 tab 条的「+」或引导页胶囊 → **版本管理**。首次加入后右侧栏默认页会从「工作区文件」变为
 引导页（官方规则：引导入口多于一个时打开引导页），页面上有两个胶囊：工作区文件 / 版本管理。
+
+### 目录还不是 Git 仓库时
+
+面板只渲染一块**居中空态**：Git 图标 + 「当前目录不是 Git 仓库」+ 目录路径 + 一个
+**「在当前目录初始化 Git 仓库」**按钮，页签、工具栏、提交树等一律不显示（那些内容在非仓库下
+全是空壳）。点按钮即在当前目录执行 `git init`，成功后空态自动消失、面板自己长回完整功能
+（不必再点 Refresh）。初始分支名依次取：端点入参 → `git config init.defaultBranch` → `main`。
+
+host 侧的语义边界（`repo/init`，受 `allowWrite` 门禁）：
+
+| 目录状态 | 行为 |
+|----------|------|
+| 不是仓库 | `git init -b <branch>`；git < 2.28 无 `-b` 时退回 `git init` + `symbolic-ref HEAD` |
+| 已经是仓库根 | 不重复初始化，返回 `already: true`（重复点击 / 竞态都安全） |
+| 在别的仓库**内部**（子目录） | 拒绝并报 `git-vcs/bad-request`，避免凭空造出嵌套仓库 |
 
 ### 工具栏
 
@@ -363,16 +380,17 @@ Amend 语义是修补上一次提交，**忽略勾选**（按钮文案里已注�
 - 没有 changelist 分组、没有 Shelf、没有多 VCS root、没有编辑器 gutter 标记（DSH 无编辑器面板可挂）。
 - 没有文件系统监听：自动刷新依赖 `autoRefreshSeconds` 或手动刷新。
 - 状态只在内存：刷新页面即重置（与官方右侧栏一致）。
-- `init` 端点 host 侧已实现，但面板没有入口（需要时先加按钮）。
+- 初始化只做 `git init`，不会顺带建 `.gitignore` / `README` / 首次提交（IDEA 会问是否加这些）。
+- 空态下如果 `allowWrite=false`，按钮置灰并提示原因（初始化属于写操作）。
 
 ## 自检与排障
 
 | 脚本 | 用途 |
 |------|------|
-| `node scripts\verify-host.mjs [仓库]` | 不需要挂 profile，直接在宿主域内跑全部 host 端点（真实 git、临时仓库）。覆盖解析结果、错误码门禁、`allowPush` 门禁、相对路径/非仓库拒绝、未跟踪文件 diff、勾选提交的 pathspec 回归、提交树覆盖所有分支 + `skip` 分页不串页等 **49 条断言** |
+| `node scripts\verify-host.mjs [仓库]` | 不需要挂 profile，直接在宿主域内跑全部 host 端点（真实 git、临时仓库）。覆盖解析结果、错误码门禁、`allowPush` 门禁、相对路径/非仓库拒绝、未跟踪文件 diff、勾选提交的 pathspec 回归、提交树覆盖所有分支 + `skip` 分页不串页、`repo/init` 全部分支（建仓库 / 幂等 / 指定分支 / 非法分支名 / 嵌套拒绝 / 未出生分支 oid 归一 / `allowWrite` 门禁）等 **63 条断言** |
 | `node scripts\render-probe.mjs` | 浏览器半区的离线自检：本机没装 react，脚本自带一个迷你 React 把面板真挂起来，跑「打开仓库 → 切 Log → 滚到底续拉 → 刷新」，断言提交树渲染出其它分支独有的提交、**泳道拓扑**（tip 上方不画线、分支各有泳道、斜线画在真正的分叉提交上）、续拉按 hash 去重、刷新不缩回一页（**14 条断言**，视觉部分仍需真机目测） |
 | `node scripts\render-probe.mjs --real [仓库]` | 追加**与参考实现对照**的检查：把**真实仓库**的提交喂给同一份客户端代码渲染，再与 `git log --graph` 逐提交比对泳道下标与分叉行位置（两边用同一批提交、同一顺序），不一致就报出来 |
-| `node scripts\dom-probe.mjs` | 浏览器半区的**真机几何自检**：起 headless Chrome/Edge 渲染真实 `lib/client.js`（夹具数据），通过 CDP 取回**渲染后的像素几何**，断言泳道竖线与圆点同心、斜线只占行高的 32%（分叉）/ 从 68% 到行底（合并）、斜线层高度等于行高（**7 条断言**）。先 `npm install --prefix .npm-cache/domprobe react@18.3.1 react-dom@18.3.1`；缺浏览器/React 会自动跳过。**沙箱禁止命名管道**（Chrome 的 mojo IPC 会直接 FATAL），需放宽权限或沙箱外运行 |
+| `node scripts\dom-probe.mjs` | 浏览器半区的**真机几何自检**：起 headless Chrome/Edge 渲染真实 `lib/client.js`（夹具数据），通过 CDP 取回**渲染后的像素几何**，断言泳道竖线与圆点同心、斜线只占行高的 32%（分叉）/ 从 68% 到行底（合并）、斜线层高度等于行高，并单独加载一份「非仓库」快照断言**空态**行为：功能内容一条都不渲染、空态块铺满且按钮居中、点击后真的调了一次 `repo/init` 且功能面板自己长回来（**15 条断言**）。先 `npm install --prefix .npm-cache/domprobe react@18.3.1 react-dom@18.3.1`；缺浏览器/React 会自动跳过。**沙箱禁止命名管道**（Chrome 的 mojo IPC 会直接 FATAL），需放宽权限或沙箱外运行 |
 | `node scripts\preview-check.mjs` | 在 `node:vm` 沙箱里装载真实 host 半区，按 host-runner 的 cloneJson 规则校验每个端点的信封是否无损 JSON，并确认 RPC 通道注册成功 |
 | `node scripts\status-probe.mjs [仓库]` | 用插件自己的 `status` / `diff` 读当前工作区，逐条打印 index/worktree 标记与三种 diff 长度——排查「列表说改了、差异却是空」 |
 | `node scripts\web-rpc-probe.mjs` | 在**隔离的 DSH_HOME** 里用完整 web 组合（base + web-app + 本插件）起临时实例（端口 3199），抓 host 日志并对 `/git-vcs` 做免认证探测：**401 = 路由在**（与 `/api` 一致）、**405 = 路由不在**（被静态兜底接手） |

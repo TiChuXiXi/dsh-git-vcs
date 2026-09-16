@@ -7,7 +7,7 @@
  * 注意：沙箱下 Node 抓子进程输出不能用管道（EPERM），这里统一用文件描述符重定向。
  */
 import { spawn, spawnSync } from 'node:child_process'
-import { mkdtempSync, openSync, closeSync, readFileSync, existsSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, openSync, closeSync, readFileSync, existsSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { apply } from '../index.js'
@@ -488,6 +488,103 @@ if (logAll.ok !== true || logPage1.ok !== true || logPage2.ok !== true) {
     results.push(`FAIL 提交树分页串页：一次取=${full.join(',')} 分页取=${paged.join(',')}`)
   }
 }
+
+/* ------------------------------------- 未初始化目录 → 一键 git init（issue #2 回归）
+ * 空态要成立，host 侧必须满足：非仓库时 snapshot 明确回 not-a-repo；init 能建仓库并让
+ * snapshot 立刻可用；重复 init / 嵌套 init / 非法分支名 / allowWrite=false 都要有确定行为。
+ */
+const initScratch = mkdtempSync(join(tmpdir(), 'gitvcs-init-'))
+// 嵌套用例：父目录本身是仓库，子目录里 init 必须被拒（否则会凭空多出一层仓库）。
+const nestedParent = mkdtempSync(join(tmpdir(), 'gitvcs-init-nested-'))
+const nestedScratch = join(nestedParent, 'inside')
+
+/** 读一条 git 命令的标准输出（同 rawGitOut，但可指定任意 cwd）。 */
+function gitOutAt(cwd, args) {
+  const outPath = join(scratch, `gitout-${counter++}.txt`)
+  const fd = openSync(outPath, 'w')
+  spawnSync('git', args, { cwd, env: process.env, stdio: ['ignore', fd, 'ignore'], windowsHide: true })
+  closeSync(fd)
+  return readFileSync(outPath, 'utf8').trim()
+}
+
+await expectError('非仓库目录：repo/snapshot 回 not-a-repo', 'repo/snapshot', { cwd: initScratch, limit: 50, all: true }, 'git-vcs/not-a-repo')
+
+// 初始分支名的期望值：入参 → git config init.defaultBranch → main（与本机配置无关，两种都算对）。
+const configuredInitBranch = gitOutAt(REPO, ['config', '--get', 'init.defaultBranch'])
+let initValue = null
+await check('repo/init 在空目录建仓库', 'init', { cwd: initScratch }, (value) => {
+  initValue = value
+  if (value.root.replace(/\\/g, '/').toLowerCase() !== initScratch.replace(/\\/g, '/').toLowerCase()) return `root=${value.root}`
+  const expected = configuredInitBranch === '' ? 'main' : configuredInitBranch
+  if (value.branch !== expected) return `branch=${value.branch}，期望 ${expected}`
+  return value.already === false ? undefined : `already=${value.already}`
+})
+
+if (existsSync(join(initScratch, '.git')) === false) {
+  results.push('FAIL repo/init 之后没有 .git 目录')
+} else {
+  results.push('OK   repo/init 之后 .git 存在')
+}
+// home 目录里仓库根的缓存必须没有任何影响：init 后 snapshot 要能直接读到这个新仓库。
+results.push(gitOutAt(initScratch, ['symbolic-ref', '--short', 'HEAD']) === (initValue?.branch ?? '')
+  ? 'OK   repo/init 之后 HEAD 指向新分支'
+  : `FAIL HEAD 指向 ${gitOutAt(initScratch, ['symbolic-ref', '--short', 'HEAD'])}，期望 ${initValue?.branch}`)
+
+await check('repo/init 之后 snapshot 立即可用（空仓库：0 提交、当前分支已就位）', 'repo/snapshot', { cwd: initScratch, limit: 50, all: true }, (value) => {
+  if (value.repo.root.replace(/\\/g, '/').toLowerCase() !== initScratch.replace(/\\/g, '/').toLowerCase()) return `root=${value.repo.root}`
+  if (Array.isArray(value.commits) === false || value.commits.length !== 0) return `commits=${JSON.stringify(value.commits).slice(0, 80)}`
+  if (value.repo.branch !== initValue?.branch) return `branch=${value.repo.branch}，期望 ${initValue?.branch}`
+  // 未出生的分支还没有 ref（第一个提交之后才会出现），所以 branches.local 此刻就是空的 —— 这是 git 的语义。
+  if (value.repo.detached === true) return '新仓库被判成了 DETACHED'
+  if (value.repo.oid !== '' || value.repo.shortHead !== '') return `未出生分支的 oid 没归一：oid=${value.repo.oid} shortHead=${value.repo.shortHead}`
+  return undefined
+})
+
+await check('重复 repo/init 幂等（already=true，不重复建）', 'init', { cwd: initScratch }, (value) => (
+  value.already === true ? undefined : `already=${value.already}`
+))
+
+const trunkScratch = mkdtempSync(join(tmpdir(), 'gitvcs-init-trunk-'))
+await check('repo/init 支持指定初始分支', 'init', { cwd: trunkScratch, branch: 'trunk' }, (value) => (
+  value.branch === 'trunk' ? undefined : `branch=${value.branch}`
+))
+results.push(gitOutAt(trunkScratch, ['symbolic-ref', '--short', 'HEAD']) === 'trunk'
+  ? 'OK   指定分支真的生效（HEAD → trunk）'
+  : 'FAIL 指定初始分支没有生效')
+await expectError('repo/init 非法分支名被拒', 'init', { cwd: mkdtempSync(join(tmpdir(), 'gitvcs-init-bad-')), branch: 'bad name' }, 'git-vcs/bad-request')
+await expectError('repo/init 分支名以 - 开头被拒', 'init', { cwd: mkdtempSync(join(tmpdir(), 'gitvcs-init-dash-')), branch: '-x' }, 'git-vcs/bad-request')
+
+// 已经是仓库根的目录：init 不重复初始化（返回 already），也不该报错。
+await check('对已有仓库根 init → already=true', 'init', { cwd: remoteScratch }, (value) => (
+  value.already === true ? undefined : `already=${value.already}`
+))
+
+// 仓库内部的子目录：必须拒绝，避免凭空造出嵌套仓库。
+mkdirSync(nestedScratch, { recursive: true })
+gitOutAt(nestedParent, ['init', '--quiet'])
+await expectError('仓库内子目录 init 被拒（不造嵌套仓库）', 'init', { cwd: nestedScratch }, 'git-vcs/bad-request')
+results.push(existsSync(join(nestedScratch, '.git')) === false
+  ? 'OK   被拒的嵌套目录没有留下 .git'
+  : 'FAIL 嵌套 init 被拒但仍写下了 .git')
+
+// allowWrite=false：init 是写操作，必须在跑 git 之前就被门禁拦下。
+const initRoute = { route: undefined, response: { status: 0, body: '' } }
+const initHandler = (endpoint, payload) => callRoute(initRoute, endpoint, payload)
+apply({
+  get(key) {
+    if (key === 'subprocess') return fakeSubprocess
+    if (key === 'webServer') return makeFakeWebServer(initRoute)
+    if (key === 'connection') return fakeConnection
+    return undefined
+  },
+  effect(fn) { fn() },
+}, { allowWrite: false, allowPush: false, allowDangerous: false })
+const noWrite = await initHandler('init', { cwd: mkdtempSync(join(tmpdir(), 'gitvcs-init-nowrite-')) }, new AbortController().signal)
+if (noWrite.ok === false && noWrite.error.code === 'git-vcs/write-disabled') results.push('OK   allowWrite=false 时 init 被门禁拦截')
+else results.push(`FAIL allowWrite=false 时 init 未被拦截：${JSON.stringify(noWrite).slice(0, 160)}`)
+
+rmSync(initScratch, { recursive: true, force: true })
+rmSync(trunkScratch, { recursive: true, force: true })
 
 /* ------------------------------------------------------- 凭据保存（credential/approve）
  * 用临时 gitconfig + credential-store 指向临时文件，绝不碰用户真实的 ~/.git-credentials。

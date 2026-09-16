@@ -246,6 +246,12 @@ function parseStatus(stdout) {
       continue
     }
   }
+  // 未出生的分支（刚 init、还没有第一个提交）：git 把 oid 写成字面量 `(initial)`，
+  // 留着它会让 shortHead 变成 "(initia" 这种假哈希 —— 归一成空串并打上 unborn。
+  if (branch.oid === '(initial)') {
+    branch.oid = ''
+    branch.unborn = true
+  }
   return { branch, entries }
 }
 
@@ -589,8 +595,12 @@ export function apply(ctx, rawConfig) {
     return null
   }
 
-  /** 解析并校验 cwd：绝对路径、存在、是目录、在 repoRoot 之下、确为 git 工作树。 */
-  async function ensureWorkdir(rawCwd, signal) {
+  /**
+   * 只校验 cwd 本身：绝对路径、存在、是目录、在 repoRoot 白名单之下。**不要求是 git 仓库**。
+   * 拆出来给 `repo/init` 用 —— init 的入参天生不是仓库，但它同样必须受 repoRoot 约束，
+   * 否则「限定仓库根」的配置能被 init 绕过（在允许范围外凭空写出一个 .git）。
+   */
+  async function validateCwd(rawCwd) {
     if (typeof rawCwd !== 'string' || rawCwd.trim() === '') {
       throw new GitError('git-vcs/bad-request', '缺少 cwd（会话工作目录）')
     }
@@ -610,6 +620,12 @@ export function apply(ctx, rawConfig) {
     if (info === undefined || !info.isDirectory()) {
       throw new GitError('git-vcs/bad-request', `工作目录不存在或不是目录：${cwd}`)
     }
+    return cwd
+  }
+
+  /** 解析并校验 cwd：绝对路径、存在、是目录、在 repoRoot 之下、确为 git 工作树。 */
+  async function ensureWorkdir(rawCwd, signal) {
+    const cwd = await validateCwd(rawCwd)
     const key = cacheKey(cwd)
     const cached = rootCache.get(key)
     if (cached !== undefined) return { cwd, root: cached }
@@ -692,6 +708,32 @@ export function apply(ctx, rawConfig) {
       throw new GitError('git-vcs/bad-request', `${key} 不能以 - 开头`)
     }
     return ref
+  }
+
+  /** 当前 HEAD 指向的分支名（未出生 / 分离头时为空串）。 */
+  async function headBranchOf(cwd, signal) {
+    const result = await runGit(['symbolic-ref', '--short', '-q', 'HEAD'], { cwd, signal })
+    return result.exitCode === 0 ? result.stdout.trim() : ''
+  }
+
+  /** 用 git 自己判定分支名合法性（check-ref-format），不自己发明规则。 */
+  async function readBranchName(name, cwd, signal) {
+    if (name === '' || name.includes('\0') || name.startsWith('-')) {
+      throw new GitError('git-vcs/bad-request', `分支名非法：${name}`)
+    }
+    const check = await runGit(['check-ref-format', '--branch', name], { cwd, signal })
+    if (check.exitCode !== 0) throw new GitError('git-vcs/bad-request', `分支名非法：${name}`)
+    return name
+  }
+
+  /** init 用的初始分支名：入参 → `init.defaultBranch` → `main`。 */
+  async function initBranchOf(raw, cwd, signal) {
+    const wanted = typeof raw === 'string' ? raw.trim() : ''
+    if (wanted !== '') return await readBranchName(wanted, cwd, signal)
+    const configured = await runGit(['config', '--get', 'init.defaultBranch'], { cwd, signal })
+    const name = configured.exitCode === 0 ? configured.stdout.trim() : ''
+    if (name !== '') return await readBranchName(name, cwd, signal)
+    return 'main'
   }
 
   function readMessage(payload) {
@@ -826,23 +868,47 @@ export function apply(ctx, rawConfig) {
       }
     },
 
-    /** 把当前目录初始化为 git 仓库（IDEA 的 "Add project to VCS"）。 */
+    /**
+     * 把目录初始化为 git 仓库（IDEA 的 "Add project to VCS"，也是 issue #2 的落点）。
+     *
+     * 三种入参情形，语义各自明确：
+     *   · 目录不是仓库 → `git init`；分支名取 payload.branch（校验通过才用）→ 用户配置的
+     *     `init.defaultBranch` → `main`。**必须显式给分支名**：不配置时 git 会默认 master
+     *     并往 stderr 写一段 hint，面板里的分支标签就会变成 master，和用户预期不符。
+     *   · 目录本身就是仓库根 → 不重复初始化，返回 `already: true`（重复点击 / 竞态都安全）。
+     *   · 目录在别的仓库**内部**（子目录）→ 拒绝，避免凭空造出嵌套仓库。
+     */
     async init(payload, signal) {
       requireWrite()
-      const raw = payload?.cwd
-      if (typeof raw !== 'string' || !isAbsolute(raw)) {
-        throw new GitError('git-vcs/bad-request', 'cwd 必须是绝对路径')
+      const cwd = await validateCwd(payload?.cwd)
+      // 判断"是不是已经在某个仓库里"用 --show-prefix：它给的是 cwd 相对仓库根的路径，
+      // 空串即"cwd 就是仓库根"。**不能**拿 --show-toplevel 和 cwd 比字符串：Windows 上
+      // git 输出正斜杠（C:/Users/…）而 cwd 是反斜杠，比出来永远不等 → 自己的仓库根被误判成嵌套。
+      const prefix = await runGit(['rev-parse', '--show-prefix'], { cwd, signal })
+      if (prefix.exitCode === 0) {
+        if (prefix.stdout.trim() !== '') {
+          const top = await runGit(['rev-parse', '--show-toplevel'], { cwd, signal })
+          const root = top.exitCode === 0 ? top.stdout.trim() : ''
+          throw new GitError('git-vcs/bad-request', `该目录已在 git 仓库内（${root}），不能再初始化嵌套仓库`, { root })
+        }
+        return { root: cwd, branch: await headBranchOf(cwd, signal), already: true, message: '已经是 git 仓库' }
       }
-      const cwd = resolvePath(raw)
-      const info = await stat(cwd).catch(() => undefined)
-      if (info === undefined || !info.isDirectory()) {
-        throw new GitError('git-vcs/bad-request', `目录不存在：${cwd}`)
+
+      const branch = await initBranchOf(payload?.branch, cwd, signal)
+      let result = await runGit(['init', '-b', branch], { cwd, signal })
+      if (result.exitCode !== 0 && result.stderr.includes('unknown switch')) {
+        // git < 2.28 没有 `-b`：退回 init + symbolic-ref（HEAD 还没指向任何分支时可安全改写）。
+        result = await runGit(['init'], { cwd, signal })
+        gitOk(result)
+        const rename = await runGit(['symbolic-ref', 'HEAD', `refs/heads/${branch}`], { cwd, signal })
+        if (rename.exitCode !== 0) throw new GitError('git-vcs/error', rename.stderr.trim() || '设置初始分支失败', { argv: rename.argv })
+      } else {
+        gitOk(result)
       }
-      const result = gitOk(await runGit(['init'], { cwd, signal }))
       // 刚初始化出来的仓库：把根写进缓存，省掉后续端点的一次探测。
       rootCache.set(cacheKey(cwd), cwd)
       remoteUrlCache.delete(cacheKey(cwd))
-      return { root: cwd, message: result.stdout.trim() }
+      return { root: cwd, branch, already: false, message: result.stdout.trim() }
     },
 
     /** 变更列表（含分支跟踪信息）。 */
