@@ -7,7 +7,7 @@
 
 | 任务ID | 模块 | 状态 | 关联分支 | 最后更新 | 上下文入口 |
 |--------|------|------|---------|---------|-----------|
-| task-001 | Git 版本管理插件（右侧栏 tab + host RPC + IDEA 式 UI） | [**已发布 `dsh-git-vcs@0.1.1`**（npm `latest` + GitHub Release + tag `v0.1.1`，仓库 `main` = `c7e5ca0`）。**未发版的本地改动（2026-09-20）**：提交树三处真机问题已修——①合并的非第一父提交改为**并入已有泳道**（消除"向右突出又折返的假尖角"与"全程无节点的悬浮泳道"，certbase-offline 355 提交实测旧 4 泳道/6 尖角 → 新 3 泳道/0 尖角）；②提交树列**标签限长**（96px 截断、一行最多 3 个 + `+N`）+ 列宽上限 240px + **可拖/双击恢复自适应**；③提交详情新增「分支 · N」一行列出全部分支。自检：dom-probe **33/33**（含 merge 夹具与 `--repo` 真实仓库模式，反向对照 HEAD 版 12 条全红）、render-probe 14/14、verify-host 63/64（唯一红=当前分支非 main，环境项）、graph-sim 旧新对照]。profile 仍为 `dsh-git-vcs: 0.1.1`（npm 线上）；自检 host **64/64**（含端点反查）、浏览器半区 props 14/14 + `--real` 16/16 + 真浏览器几何/空态 18/18。另：awesome PR #5154 等 09-16 12:19 UTC 的 regate 重跑 | main | 2026-09-20 | `.opencode/tasks/task-001/context.md` |
+| task-001 | Git 版本管理插件（右侧栏 tab + host RPC + IDEA 式 UI） | [**已发布 `dsh-git-vcs@0.1.1`**（npm `latest` + GitHub Release + tag `v0.1.1`，仓库 `main` = `c7e5ca0`）。**已提交 main、未发版的本地改动（2026-09-20）**：`17ccf20` 提交树三处真机问题（①合并的非第一父提交改为**并入已有泳道**，消除"向右突出又折返的假尖角"与"全程无节点的悬浮泳道"，certbase-offline 355 提交实测旧 4 泳道/6 尖角 → 新 3 泳道/0 尖角；②提交树列**标签限长** 96px + 一行最多 3 个 + `+N`、列宽上限 240px 且**可拖/双击恢复自适应**；③提交详情新增「分支 · N」一行）→ `8777fe4` 探针与 `graph-sim.mjs` → `a52c64c` 记忆归档 → `34e3351` **线端统一到「圆心 ±4px」**（斜线改画在两张 px 精确横带里，竖直段与斜线不再错开 1–2px：用户截图 fc39963 那两个节点现在逐像素相等）。自检：dom-probe **31/31** + `--repo` **35/35**、render-probe **15/15** + `--real` **18/18**、verify-host **64/64**、preview-check 全过；反向对照旧版分别 12 条 / 5 条全红。**profile 已切回 `link:D:/zxh/code/git-plugin`**（重启 dsh web 后生效）；4 个提交**未 push**。另：awesome PR #5154 等 09-16 12:19 UTC 的 regate 重跑 | main | 2026-09-20 | `.opencode/tasks/task-001/context.md` |
 
 ## 快速查找规则
 

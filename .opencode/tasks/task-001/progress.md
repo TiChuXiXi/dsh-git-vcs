@@ -690,8 +690,62 @@ origin/customer/guizhou-bianjian 三条 ref）与三张对照截图，指出三�
 
 ### 未做（等用户定）
 
-- **没有动版本号、没有发布、没有动 profile**：`~/.dsh/profiles/web` 仍写着 `dsh-git-vcs: 0.1.1`（npm 线上版），
-  所以这次修复要在真机看到，要么把 profile 切回 `link:D:/zxh/code/git-plugin`，要么发 0.1.2 再装线上版。
+- ~~**没有动版本号、没有发布、没有动 profile**：`~/.dsh/profiles/web` 仍写着 `dsh-git-vcs: 0.1.1`（npm 线上版），
+  所以这次修复要在真机看到，要么把 profile 切回 `link:D:/zxh/code/git-plugin`，要么发 0.1.2 再装线上版。~~
+  **已定**：用户选"提交到 main + profile 切回 link 本地目录"，已执行（见下）。版本号仍 0.1.1、未发布。
+
+### 落地（用户选择：提交到 main + profile 切回 link）
+
+- 三个提交落在 `main`：`17ccf20`（三处修复）→ `8777fe4`（探针 + graph-sim）→ `a52c64c`（记忆归档）；
+  **未 push**（用户没让推）。工作分支原先在 `test/new-check-2`（与 main 同点），切到 `main` 后提交。
+- profile 换成 `link:D:/zxh/code/git-plugin`：`dsh plugin --profile web add link:...` →
+  `~/.dsh/profiles/web/node_modules/dsh-git-vcs` 是 Junction 指向本仓库，
+  `dsh --profile web --dump-config` 能看到 `- id: git-vcs`。切换后需**重启 dsh web**（插件解析路径变了）。
+
+## 2026-09-20 · 第二轮：线端错位（用户截图 fc39963 / b41e6ab 那两行）
+
+用户第二条反馈："都是同一个节点出来的，为什么不画在一起而是向上偏移了几像素？"
+（附 227×350 与 826×57 两张截图）
+
+### 定位（截图逐像素解码 + 真机几何探针交叉验证）
+
+- 写了 `.npm-cache/png-probe.mjs` / `png-pixels.mjs`（临时工具，不进 git）：手写 PNG 解码
+  （zlib + filter 还原）后按列/按行打印彩色像素区间与原始 RGB。从截图量出：lane0 = x154.5、
+  lane1 = 168.5、行高 29.5px、绿环圆心 ±5px 外沿；b41e6ab 行的岔出斜线起点 y=20.06、
+  竖直段起点 y≈21.5（被斜线压住），fc39963 行的上行竖直段止点 y≈39.5（圆心 -5）、
+  汇入斜线止点 y≈38.2（圆心 -5.31）→ **同一节点上两条线端差 1.3px**。
+- 根因：竖直段用 px 精确值（`calc(50% ± NODE_EDGE_PX)`），斜线画在一张**铺满行高**的 SVG 里、
+  止点只能用百分比近似（`50% ± 18%` = 按"假设行高 28px"折算的 5px）。行高实际 29.5px 时
+  斜线端落到 ±5.31px；而且上行竖直段 `top:-1px` + `height: calc(50% - 4px)` 实际止于 -5px，
+  与斜线的 -5.31 差 1.3px、与"以为的 -4px"又差 1px。
+- 用户那句"同一个节点出来的线"就是指这种端点不重合：fc39963 行同时有上行竖直段与从 lane2
+  汇入的斜线，两者没落在同一点上。
+
+### 改动
+
+- 斜线层从「一张铺满行高的 SVG + 百分比止点」改成**两张 px 精确的横带**（GraphCell 的 `band()`）：
+  上带 `top:-1px; height: calc(50% - 3px)`（底边 = 圆心-4px，画汇入斜线）、
+  下带 `top: calc(50% + 4px); height: calc(50% - 3px)`（顶边 = 圆心+4px，画岔出斜线）；
+  带内斜线一律 0→100。
+- 上行竖直段与上带**共用同一个 height 表达式**，下行从 `calc(50% + 4px)` 起 → 四类线端由构造重合，
+  且与行高无关（换字号也不会再错开）。没有斜线的行不再渲染空 SVG。
+- 常量：`NODE_EDGE_PX = NODE_RADIUS - 1 = 4`；删掉 `NODE_EDGE_PCT` / `ROW_HEIGHT_PX`（不再需要假设行高）。
+
+### 验证
+
+- `dom-probe.mjs` 30→**31**、`--repo` 33→**35**：新增「斜线带边界精确落在圆心 ±4px」
+  「同一节点出来的线端落在同一高度（容差 0.75px，且要求这类节点数 > 0 防空跑）」。
+  真实仓库 12 个多线节点全部逐像素相等，含用户截图那两个：
+  `merge: master 全部改动对齐`（竖直段 2304.3 / 斜线 2304.3）、
+  `docs(memory): 订正 task-cer…`=fc39963（2325.8 / 2325.8）。
+- `render-probe.mjs` 14→**15**、`--real` 16→**18**：新增「上下行竖直段与斜线带共用同一段几何」；
+  把旧的「分叉行与 git 完全一致」换成「汇合斜线不凭空出现 + 每个合并提交都有连接线」——
+  git 的 `|/` 画在**父提交**那一行，本插件按 IDEA 画法画在**合并提交**那一行，两边约定不同，
+  强求相等会把正确的画法判成错（这条旧断言正是被第一轮的"并入已有泳道"改动打破的）。
+- 反向对照（`DOM_PROBE_CLIENT` 指向 `17ccf20` 的 client.js）：35 条里 **5 条红**，
+  逐条覆盖上面每条新规则；新代码全绿。`verify-host` 回到 **64/64**（切回 main 后分支名断言也过了）。
+- 提交：`34e3351 fix(log): 提交树线端统一到「圆心 ±4px」`（lib/client.js / README / 两个探针）。
+
 
 
 
