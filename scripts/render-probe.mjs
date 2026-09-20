@@ -159,10 +159,19 @@ const findButton = (tree, label) => find(tree, (node) => node.type === 'button' 
 /** 提交行：带 onContextMenu 的 div（右键菜单是提交行独有的）。 */
 const commitRows = (tree) => findAll(tree, (node) => typeof node.props?.onContextMenu === 'function')
 
-/** 泳道常量（与 lib/client.js 的 LANE_GAP / NODE_EDGE_PCT 对应）。 */
+/** 泳道常量（与 lib/client.js 的 LANE_GAP / 连线端点规则对应）。 */
 const LANE_GAP = 14
 const center = (lane) => lane * LANE_GAP + LANE_GAP / 2
-const NODE_EDGE_PCT = 18
+/**
+ * 连线的两条斜线带（lib/client.js 的 GraphCell）：
+ * 上带 = 行顶(-1px) → 圆心-4px（汇入斜线），下带 = 圆心+4px → 行底(+1px)（岔出斜线），
+ * 两层高度都是 `calc(50% - 3px)`；竖直段的止点也用同一个 4px，所以同一个节点出来的
+ * 竖直段与斜线必然落在同一点上。
+ */
+const NODE_EDGE_PX = 4
+const BAND_UPPER_TOP = '-1px'
+const BAND_LOWER_TOP = `calc(50% + ${NODE_EDGE_PX}px)`
+const BAND_HEIGHT = `calc(50% - ${NODE_EDGE_PX - 1}px)`
 
 /** 取某条提交行的「提交树」单元格（tdGraph 是那个 display:flex + gap:4px 的盒子）。 */
 function graphCellOf(tree, subject) {
@@ -176,6 +185,8 @@ const verticalSegs = (cell) => findAll(cell, (node) => node.props?.style?.positi
 const diagonalSegs = (cell) => findAll(cell, (node) => node.props?.x1 !== undefined && node.props?.y1 !== undefined)
 /** 单元格里的圆点（12×12 的 svg）。 */
 const nodeDot = (cell) => find(cell, (node) => node.props?.width === 12 && node.props?.height === 12 && typeof node.props?.style?.left === 'string')
+/** 某条斜线所属的斜线带（svg：它的 children 里就装着这条 line）。 */
+const diagonalBandOf = (cell, line) => find(cell, (node) => node.type === 'svg' && (node.children ?? []).includes(line))
 /**
  * 竖线段是否落在第 lane 条泳道的中线上。
  * 线宽 2px，`left` 是**左边缘**（= 泳道中心 - 1），所以要 +1 还原成线心再比。
@@ -374,9 +385,27 @@ if (logTab === null) {
     if (forkCell === null) return '没找到分叉提交的提交树单元格'
     const line = diagonalSegs(forkCell).find((node) => node.props.x1 === center(1) && node.props.x2 === center(0))
     if (line === undefined) return `没有从第 2 条泳道汇入第 1 条的斜线（斜线=${JSON.stringify(diagonalSegs(forkCell).map((node) => [node.props.x1, node.props.x2]))}）`
-    if (line.props.y1 !== 0 || line.props.y2 !== 50 - NODE_EDGE_PCT) return `斜线纵向=${line.props.y1}→${line.props.y2}`
+    // 新画法：斜线整条铺满所属的 px 横带（纵向 0→100），止点由带子的上下边界决定
+    if (line.props.y1 !== 0 || line.props.y2 !== 100) return `斜线纵向=${line.props.y1}→${line.props.y2}`
+    const band = diagonalBandOf(forkCell, line)
+    if (band === null) return '斜线不在任何斜线带里'
+    if (band.props.style.top !== BAND_UPPER_TOP || band.props.style.height !== BAND_HEIGHT) {
+      return `上带几何=${JSON.stringify({ top: band.props.style.top, height: band.props.style.height })}`
+    }
     const dot = nodeDot(forkCell)
     return dot !== null && dotAtLane(dot, 0) ? undefined : '分叉提交的圆点没落在第 1 条泳道'
+  })())
+
+  ok('汇入竖直段与斜线带共用同一段几何（圆心 ±4px，端点才会重合）', (() => {
+    if (forkCell === null) return '没找到分叉提交的提交树单元格'
+    const up = verticalSegs(forkCell).find((node) => node.props.style.top === '-1px' && typeof node.props.style.height === 'string')
+    if (up === undefined) return '分叉行没有上行竖直段'
+    if (up.props.style.height !== BAND_HEIGHT) return `上行竖直段 height=${up.props.style.height}，期望与上带一致 ${BAND_HEIGHT}`
+    const lower = verticalSegs(forkCell).filter((node) => typeof node.props.style.top === 'string' && node.props.style.top.startsWith('calc(50% +'))
+    for (const seg of lower) {
+      if (seg.props.style.top !== BAND_LOWER_TOP) return `下行竖直段 top=${seg.props.style.top}，期望 ${BAND_LOWER_TOP}`
+    }
+    return undefined
   })())
 
   ok('分叉之后并成一条泳道（右泳道不再有线）', (() => {
@@ -526,8 +555,12 @@ if (realAt !== -1) {
       const lane = (parseFloat(dot.props.style.left) + 6 - LANE_GAP / 2) / LANE_GAP
       compared += 1
       if (lane !== expected) mismatches.push(`${String(row.props.key).slice(0, 7)} 我的泳道=${lane}，git=${expected}`)
-      // 汇合斜线（y1 = 0 的那条）出现在哪一行，就是"分叉点画在哪一次提交上"。
-      if (cell !== null && diagonalSegs(cell).some((line) => line.props.y1 === 0)) myForkRows.add(row.props.key)
+      // 汇合斜线 = 落在**上带**（top: -1px）里的那条斜线；下带里的是岔出斜线。
+      // （新画法里两条带的斜线纵向都是 0→100，所以不能再靠 y1 区分方向。）
+      if (cell !== null && diagonalSegs(cell).some((line) => {
+        const band = diagonalBandOf(cell, line)
+        return band !== null && band.props.style.top === BAND_UPPER_TOP
+      })) myForkRows.add(row.props.key)
       if (dump === true && cell !== null) {
         const verticals = verticalSegs(cell).map((node) => {
           const s = node.props.style
@@ -543,12 +576,31 @@ if (realAt !== -1) {
       if (compared === 0) return '一条都没对上（git 参考或渲染有问题）'
       return mismatches.length === 0 ? undefined : mismatches.slice(0, 6).join('；')
     })())
-    ok('分叉点落在与 git 相同的提交上（汇合斜线所在行）', (() => {
-      const mine = [...myForkRows]
-      const theirs = [...gitForkRows]
-      if (mine.length === 0 && theirs.length > 0) return `我这里一条汇合斜线都没有，git 有 ${theirs.length} 处`
-      const missing = theirs.filter((hash) => myForkRows.has(hash) === false)
-      if (missing.length > 0) return `git 在这些提交上画分叉，我没有：${missing.map((hash) => hash.slice(0, 7)).join(', ')}`
+    /**
+     * 汇合斜线的落点。
+     *
+     * 注意：**不能**要求"git 画分叉的行我也画" —— 两边画法约定不同：
+     * git 的 `|/` 画在"多余泳道消失"的那一行（合并的父提交那一行），
+     * 而本插件按 IDEA 的画法，把合并的额外父提交**直接并进已有泳道**，于是在合并提交
+     * 自己那一行画一段岔出斜线，父提交那一行就没有汇合线了。所以这里只钉两条：
+     *   ① 我画的汇合斜线必须是 git 也标了斜线的行（绝不凭空画）；
+     *   ② 每个合并提交都必须画出一条连接线（否则它的父提交就成了"天上线"）。
+     */
+    ok('汇合斜线不凭空出现（都在 git 标了斜线的行上）', (() => {
+      const invented = [...myForkRows].filter((hash) => gitForkRows.has(hash) === false)
+      return invented.length === 0
+        ? undefined
+        : `我没有对应 git 斜线的汇合行：${invented.map((hash) => hash.slice(0, 7)).join(', ')}`
+    })())
+    ok('每个合并提交都画了连接线（额外父提交不悬空）', (() => {
+      const naked = []
+      for (const row of commitRows(tree)) {
+        const commit = commits.find((item) => item.hash === row.props.key)
+        if (commit === undefined || commit.parents.length < 2) continue
+        const cell = find(row, (node) => node.props?.style?.display === 'flex' && node.props?.style?.gap === '4px')
+        if (cell === null || diagonalSegs(cell).length === 0) naked.push(commit.shortHash)
+      }
+      if (naked.length > 0) return `这些合并提交一行斜线都没有：${naked.join(', ')}`
       return undefined
     })())
   }

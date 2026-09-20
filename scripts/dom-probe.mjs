@@ -307,7 +307,9 @@ const collectRows = () => commitRows().map((row) => {
   const cell = laneBox === null ? null : laneBox.parentElement
   const chips = cell === null ? null : cell.children[1]
   const svgs = [...row.querySelectorAll('svg')]
-  const linesSvg = svgs.find((node) => (node.getAttribute('viewBox') ?? '').split(' ')[3] === '100')
+  // 斜线是**两条横带**（汇入 / 岔出各一条，几何用 calc(50% ± 4px) 精确算），
+  // 标志：viewBox 纵向是 100 的那两张。
+  const bands = svgs.filter((node) => (node.getAttribute('viewBox') ?? '').split(' ')[3] === '100')
   const dotSvg = svgs.find((node) => node.getAttribute('width') === '12')
   return {
     subject: row.getAttribute('title'),
@@ -317,12 +319,12 @@ const collectRows = () => commitRows().map((row) => {
     chips: chips === null || chips === undefined
       ? []
       : [...chips.children].map((chip) => ({ text: chip.textContent || '', title: chip.getAttribute('title') || '', width: rect(chip).width })),
-    linesSvg: linesSvg === undefined ? null : rect(linesSvg),
+    bands: bands.map((node) => ({ box: rect(node), lines: [...node.querySelectorAll('line')].map((line) => rect(line)) })),
     dot: dotSvg === undefined ? null : rect(dotSvg),
     verticals: [...row.querySelectorAll('div')]
       .filter((node) => (node.getAttribute('style') ?? '').includes('width: 2px'))
       .map((node) => rect(node)),
-    diagonals: linesSvg === undefined ? [] : [...linesSvg.querySelectorAll('line')].map((line) => rect(line)),
+    diagonals: bands.flatMap((node) => [...node.querySelectorAll('line')].map((line) => rect(line))),
   }
 })
 
@@ -461,6 +463,53 @@ const results = []
 const ok = (label, problem) => results.push(problem === undefined ? `OK   ${label}` : `FAIL ${label}: ${problem}`)
 const near = (left, right, tolerance) => Math.abs(left - right) <= tolerance
 
+/**
+ * 「同一个节点出来的线必须画在一起」：每个圆点上，所有止于该节点的线端（上下竖直段 +
+ * 汇入/岔出斜线）离圆心的距离必须一致 —— 竖直段是 `calc(50% ± NODE_EDGE_PX)`、斜线是
+ * 百分比换算，两者换算基准不一致时就会在圆环边上错开 1–2px（真机反馈 fc39963 那行）。
+ */
+const NODE_EDGE_PX = 4
+function tipProblems(rows, laneBoxLeft, label) {
+  const laneOf = (x) => Math.round((x - laneBoxLeft - LANE_GAP / 2) / LANE_GAP)
+  const laneCenter = (lane) => laneBoxLeft + lane * LANE_GAP + LANE_GAP / 2
+  const problems = []
+  const checked = []
+  let nodes = 0
+  for (const row of rows) {
+    if (row.dot === null) continue
+    const nodeLane = laneOf(row.dot.left + row.dot.width / 2)
+    const cy = row.dot.top + row.dot.height / 2
+    const candidates = []
+    for (const line of row.verticals) {
+      if (near(line.left + line.width / 2, laneCenter(nodeLane), 1.5) === false) continue
+      // 取靠近圆心的那一端（另一端在行边界上，是上一行/下一行的接缝）
+      candidates.push(Math.abs(line.top - cy) <= Math.abs(line.bottom - cy) ? { who: '竖直段', y: line.top } : { who: '竖直段', y: line.bottom })
+    }
+    for (const line of row.diagonals) {
+      const leftLane = laneOf(line.left + 1)
+      const rightLane = laneOf(line.right - 1)
+      if (leftLane !== nodeLane && rightLane !== nodeLane) continue
+      // 斜线在节点泳道那一侧的端点是「最靠近圆心的那条 bbox 边」
+      candidates.push(Math.abs(line.top - cy) <= Math.abs(line.bottom - cy) ? { who: '斜线', y: line.top } : { who: '斜线', y: line.bottom })
+    }
+    const incoming = candidates.filter((item) => item.y < cy)
+    const outgoing = candidates.filter((item) => item.y >= cy)
+    for (const [group, want] of [[incoming, cy - NODE_EDGE_PX], [outgoing, cy + NODE_EDGE_PX]]) {
+      if (group.length < 2) continue
+      nodes += 1
+      checked.push(`${String(row.subject).slice(0, 20)}（${group.map((item) => `${item.who} ${item.y.toFixed(1)}`).join(' / ')}）`)
+      const spread = Math.max(...group.map((item) => item.y)) - Math.min(...group.map((item) => item.y))
+      const off = Math.max(...group.map((item) => Math.abs(item.y - want)))
+      // 容差 0.75px：竖直段是 calc(50% ± 4px)、斜线带边界也是同一个 calc，理论上应当逐像素相等；
+      // 老写法（斜线止点用 18% 近似）会差 1.3px，这里必须能红。
+      if (spread > 0.75 || off > 0.75) {
+        problems.push(`${label}「${String(row.subject).slice(0, 24)}」：${group.map((item) => `${item.who} ${item.y.toFixed(1)}`).join(' / ')}（圆心 ${cy.toFixed(1)}，期望 ${want.toFixed(1)}，错开 ${spread.toFixed(1)}px）`)
+      }
+    }
+  }
+  return { problems, nodes, checked }
+}
+
 if (measured.error !== undefined) {
   ok('页面探针执行', measured.error)
 } else {
@@ -475,11 +524,25 @@ if (measured.error !== undefined) {
   }
   ok(`渲染出 ${rows.length} 行提交`, rows.length === 8 ? undefined : `行数=${rows.length}（正文：${String(measured.bodyText).slice(0, 80)}）`)
 
-  // 1. 斜线层高度必须等于行高（真机 bug：高度 auto → 按 viewBox 比例算成 100px，斜线落到下面几行）
-  const badHeight = rows.filter((row) => row.linesSvg === null || near(row.linesSvg.height, row.laneBox.height, 1) === false)
-  ok('斜线 SVG 的高度等于行高（不是 viewBox 固有比例算出的 100px）', badHeight.length === 0
-    ? undefined
-    : badHeight.map((row) => `${row.subject}: svg=${row.linesSvg === null ? 'n/a' : row.linesSvg.height.toFixed(1)} 行=${row.laneBox.height.toFixed(1)}`).join('；'))
+  // 1. 斜线带必须由 calc(50% ± 4px) 精确量出上下边界（真机两个 bug：高度 auto 时按 viewBox
+  //    固有比例算成 100px、斜线落到下面几行；止点用百分比近似导致与竖直段错开 1–2px）
+  const badBand = []
+  for (const row of rows) {
+    if (row.bands.length === 0) continue
+    const cy = row.dot === null ? row.row.top + row.row.height / 2 : row.dot.top + row.dot.height / 2
+    for (const item of row.bands) {
+      const above = item.box.top < cy
+      const wantEdge = above ? cy - 4 : cy + 4
+      const gotEdge = above ? item.box.bottom : item.box.top
+      if (near(gotEdge, wantEdge, 1) === false) {
+        badBand.push(`${row.subject}: ${above ? '上' : '下'}带${above ? '底' : '顶'}=${gotEdge.toFixed(1)}，期望圆心±4=${wantEdge.toFixed(1)}`)
+      }
+      if (near(item.box.width, row.laneBox.width, 0.5) === false) badBand.push(`${row.subject}: 带宽=${item.box.width.toFixed(1)}，期望 ${row.laneBox.width.toFixed(1)}`)
+      if (item.lines.length === 0) badBand.push(`${row.subject}: 空斜线带`)
+    }
+    if (row.bands.length > 2) badBand.push(`${row.subject}: 斜线带 ${row.bands.length} 条（最多 2 条）`)
+  }
+  ok('斜线带边界精确落在「圆心 ± 4px」与行高上（不是百分比近似）', badBand.length === 0 ? undefined : badBand.slice(0, 4).join('；'))
 
   // 2. 圆点与所有连线都必须正落在某条泳道的中线上（真机 bug：连线以泳道中心为 left、
   //    但线宽 2px，线心比圆心偏右 1px）
@@ -499,6 +562,11 @@ if (measured.error !== undefined) {
   }
   ok('圆点与连线都正落在泳道中线上（不再整体偏右 1px）', offLane.length === 0 ? undefined : offLane.slice(0, 4).join('；'))
 
+  // 2b. 同一个节点出来的线必须止于同一高度（竖直段与斜线的换算基准要对齐）
+  const tips = tipProblems(rows, laneBoxLeft, '')
+  if (DEBUG) console.log(`  线端对齐检查覆盖了 ${tips.nodes} 个「多条线汇入/岔出」的节点`)
+  ok('同一节点出来的线端落在同一高度（竖直段与斜线不错开）', tips.problems.length === 0 ? undefined : tips.problems.slice(0, 3).join('；'))
+
   // 3. 分支 tip：圆点独占泳道、上方不画线
   for (const [subject, lane] of [['test tip', 0], ['main tip', 1]]) {
     const row = rowOf(subject)
@@ -510,32 +578,32 @@ if (measured.error !== undefined) {
       : (above.length === 0 ? undefined : 'tip 上方还画了连线'))
   }
 
-  // 4. 分叉斜线：只占分叉行上半段的 0→32%，两端落在两条泳道中心
+  // 4. 汇入斜线：整条「上带」铺满（行顶(-1px) → 圆心-4px），两端落在两条泳道中心
   const fork = rowOf('fork commit')
   if (fork === undefined || fork.diagonals.length === 0) {
     ok('分叉斜线几何', '分叉行没有斜线')
   } else {
     const line = fork.diagonals[0]
-    const expectedBottom = fork.row.top + 0.32 * fork.row.height
+    const cy = fork.dot.top + fork.dot.height / 2
     const problems = []
-    if (near(line.top, fork.row.top, 2) === false) problems.push(`起点 y=${line.top.toFixed(1)}，期望行顶 ${fork.row.top.toFixed(1)}`)
-    if (near(line.bottom, expectedBottom, 2.5) === false) problems.push(`终点 y=${line.bottom.toFixed(1)}，期望 ${expectedBottom.toFixed(1)}（行的 32%）`)
+    if (near(line.top, fork.row.top, 1.5) === false) problems.push(`起点 y=${line.top.toFixed(1)}，期望行顶 ${fork.row.top.toFixed(1)}`)
+    if (near(line.bottom, cy - 4, 1) === false) problems.push(`终点 y=${line.bottom.toFixed(1)}，期望圆心-4px=${(cy - 4).toFixed(1)}`)
     if (near(line.right, center(1) + 1, 2) === false) problems.push(`右端 x=${line.right.toFixed(1)}，期望 ${(center(1) + 1).toFixed(1)}`)
     if (near(line.left, center(0) - 1, 2) === false) problems.push(`左端 x=${line.left.toFixed(1)}，期望 ${(center(0) - 1).toFixed(1)}`)
-    ok('分叉斜线只占分叉行上半段、两端落在两条泳道中心', problems.length === 0 ? undefined : problems.join('；'))
+    ok('汇入斜线铺满上带、两端落在两条泳道中心、止于圆心 ±4px', problems.length === 0 ? undefined : problems.join('；'))
   }
 
-  // 5. 分出斜线：从 68% 到行底
+  // 5. 岔出斜线：整条「下带」铺满（圆心+4px → 行底(+1px)）
   const merge = rowOf('merge commit')
   if (merge === undefined || merge.diagonals.length === 0) {
     ok('分出斜线几何', '合并行没有斜线')
   } else {
     const line = merge.diagonals[0]
-    const expectedTop = merge.row.top + 0.68 * merge.row.height
+    const cy = merge.dot.top + merge.dot.height / 2
     const problems = []
-    if (near(line.top, expectedTop, 2.5) === false) problems.push(`起点 y=${line.top.toFixed(1)}，期望 ${expectedTop.toFixed(1)}（行的 68%）`)
-    if (near(line.bottom, merge.row.bottom, 2.5) === false) problems.push(`终点 y=${line.bottom.toFixed(1)}，期望行底 ${merge.row.bottom.toFixed(1)}`)
-    ok('分出斜线从行下半段起始、落到行底', problems.length === 0 ? undefined : problems.join('；'))
+    if (near(line.top, cy + 4, 1) === false) problems.push(`起点 y=${line.top.toFixed(1)}，期望圆心+4px=${(cy + 4).toFixed(1)}`)
+    if (near(line.bottom, merge.row.bottom, 1.5) === false) problems.push(`终点 y=${line.bottom.toFixed(1)}，期望行底 ${merge.row.bottom.toFixed(1)}`)
+    ok('岔出斜线铺满下带、起于圆心 ±4px 落到行底', problems.length === 0 ? undefined : problems.join('；'))
   }
 }
 
@@ -741,6 +809,15 @@ if (realCase !== null) {
       spikes.length === 0 ? undefined : `${spikes.length} 处：${spikes.slice(0, 3).join('；')}`)
     const wide = rows.filter((row) => row.cell !== null && row.cell.width > 240)
     ok('真实仓库：提交树列宽度 ≤ 240px', wide.length === 0 ? undefined : wide.slice(0, 2).map((row) => `${row.cell.width.toFixed(1)}px`).join('；'))
+    const realTips = tipProblems(rows, laneBoxLeft, '真实仓库')
+    if (DEBUG) {
+      console.log(`  [real] 线端对齐检查覆盖了 ${realTips.nodes} 个「多条线汇入/岔出」的节点`)
+      for (const item of realTips.checked) console.log(`    · ${item}`)
+    }
+    ok('真实仓库：同一节点出来的线端落在同一高度（且这种节点确实存在）',
+      realTips.problems.length === 0 && realTips.nodes > 0
+        ? undefined
+        : (realTips.problems.length > 0 ? `${realTips.problems.length} 处：${realTips.problems.slice(0, 3).join('；')}` : '一个都没有覆盖到，断言可能是空跑'))
   }
 }
 
