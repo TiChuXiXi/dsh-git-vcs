@@ -7,7 +7,7 @@
 
 | 任务ID | 模块 | 状态 | 关联分支 | 最后更新 | 上下文入口 |
 |--------|------|------|---------|---------|-----------|
-| task-001 | Git 版本管理插件（右侧栏 tab + host RPC + IDEA 式 UI） | [**已发布 `dsh-git-vcs@0.1.1`**（npm `latest` + GitHub Release + tag `v0.1.1`，仓库 `main` = `c7e5ca0`）：含 issue #1 提交树覆盖所有分支 + 滚底续拉 + 多泳道图、两处真机几何修复（SVG 高度 / 线心偏心）、issue #2 非仓库整页空态 + 一键 `repo/init`（可选初始分支名）；发布物已用 `.npm-cache/verify-publish.mjs` 逐文件 sha256 核对与本地源码一致；profile 仍为本地 `link:D:/zxh/code/git-plugin`（等价 0.1.1）；自检 host **64/64**（含端点反查）、浏览器半区 props 14/14 + `--real` 16/16 + **真浏览器几何/空态 18/18**。另：awesome PR #5154 等 09-16 12:19 UTC 的 regate 重跑] | main | 2026-09-16 | `.opencode/tasks/task-001/context.md` |
+| task-001 | Git 版本管理插件（右侧栏 tab + host RPC + IDEA 式 UI） | [**已发布 `dsh-git-vcs@0.1.1`**（npm `latest` + GitHub Release + tag `v0.1.1`，仓库 `main` = `c7e5ca0`）。**未发版的本地改动（2026-09-20）**：提交树三处真机问题已修——①合并的非第一父提交改为**并入已有泳道**（消除"向右突出又折返的假尖角"与"全程无节点的悬浮泳道"，certbase-offline 355 提交实测旧 4 泳道/6 尖角 → 新 3 泳道/0 尖角）；②提交树列**标签限长**（96px 截断、一行最多 3 个 + `+N`）+ 列宽上限 240px + **可拖/双击恢复自适应**；③提交详情新增「分支 · N」一行列出全部分支。自检：dom-probe **33/33**（含 merge 夹具与 `--repo` 真实仓库模式，反向对照 HEAD 版 12 条全红）、render-probe 14/14、verify-host 63/64（唯一红=当前分支非 main，环境项）、graph-sim 旧新对照]。profile 仍为 `dsh-git-vcs: 0.1.1`（npm 线上）；自检 host **64/64**（含端点反查）、浏览器半区 props 14/14 + `--real` 16/16 + 真浏览器几何/空态 18/18。另：awesome PR #5154 等 09-16 12:19 UTC 的 regate 重跑 | main | 2026-09-20 | `.opencode/tasks/task-001/context.md` |
 
 ## 快速查找规则
 
