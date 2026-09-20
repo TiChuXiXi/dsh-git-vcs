@@ -459,6 +459,36 @@ const realCase = REPO === null ? null : await runProbe('real', PORT + 3)
 
 /* ------------------------------------------------------------------ 断言 */
 
+/**
+ * 跨行斜线：合并提交的额外父提交并进已有泳道时，斜线要**一路画到目标提交的圆点上沿**
+ * （而不是先并进泳道、再由竖直段走下去 —— 那样同一个节点上的两条线会落在不同高度）。
+ * 这里逐条检查：凡是伸出本行底部的斜线，它的下端必须正好落在后面某一行的圆点上沿。
+ */
+function crossRowProblems(rows, laneBoxLeft, label) {
+  const laneOf = (x) => Math.round((x - laneBoxLeft - LANE_GAP / 2) / LANE_GAP)
+  const laneCenter = (lane) => laneBoxLeft + lane * LANE_GAP + LANE_GAP / 2
+  const problems = []
+  let count = 0
+  for (const row of rows) {
+    if (row.dot === null) continue
+    const nodeLaneCenter = row.dot.left + row.dot.width / 2
+    for (const line of row.diagonals) {
+      if (line.bottom <= row.row.bottom + 1.5) continue // 行内斜线
+      count += 1
+      // 上端一定在本行节点泳道上，另一端就是落点
+      const topLeft = Math.abs(line.left + 1 - nodeLaneCenter) <= 1.5
+      const bottomX = topLeft ? line.right - 1 : line.left + 1
+      const target = rows.find((other) => other.dot !== null
+        && near(other.dot.left + other.dot.width / 2, bottomX, 1.5)
+        && near(other.dot.top + other.dot.height / 2 - 4, line.bottom, 1.5))
+      if (target === undefined) {
+        problems.push(`${label}「${String(row.subject).slice(0, 20)}」跨行斜线落点 ${bottomX.toFixed(1)},${line.bottom.toFixed(1)} 上没有圆点上沿`)
+      }
+    }
+  }
+  return { problems, count }
+}
+
 const results = []
 const ok = (label, problem) => results.push(problem === undefined ? `OK   ${label}` : `FAIL ${label}: ${problem}`)
 const near = (left, right, tolerance) => Math.abs(left - right) <= tolerance
@@ -566,6 +596,10 @@ if (measured.error !== undefined) {
   const tips = tipProblems(rows, laneBoxLeft, '')
   if (DEBUG) console.log(`  线端对齐检查覆盖了 ${tips.nodes} 个「多条线汇入/岔出」的节点`)
   ok('同一节点出来的线端落在同一高度（竖直段与斜线不错开）', tips.problems.length === 0 ? undefined : tips.problems.slice(0, 3).join('；'))
+
+  // 2c. 跨行斜线（合并的额外父提交）必须画到目标提交的圆点上沿，而不是停在行交界
+  const cross = crossRowProblems(rows, laneBoxLeft, '')
+  ok('合并的跨行斜线落在目标提交的圆点上沿（不再停在行交界）', cross.problems.length === 0 ? undefined : cross.problems.slice(0, 3).join('；'))
 
   // 3. 分支 tip：圆点独占泳道、上方不画线
   for (const [subject, lane] of [['test tip', 0], ['main tip', 1]]) {
@@ -688,7 +722,7 @@ if (mergeCase.error !== undefined) {
   const laneOf = (x) => Math.round((x - laneBoxLeft - LANE_GAP / 2) / LANE_GAP)
   if (DEBUG) {
     for (const row of rows) {
-      console.log(`  [merge] ${row.subject}: 圆点泳道=${row.dot === null ? 'n/a' : laneOf(row.dot.left + row.dot.width / 2)} 竖线泳道=[${row.verticals.map((line) => laneOf(line.left + line.width / 2)).join(',')}] 斜线=[${row.diagonals.map((line) => `${laneOf(line.left + 1)}→${laneOf(line.right - 1)}`).join(',')}] 单元宽=${row.cell === null ? 'n/a' : row.cell.width.toFixed(1)}`)
+      console.log(`  [merge] ${row.subject}: 圆点泳道=${row.dot === null ? 'n/a' : laneOf(row.dot.left + row.dot.width / 2)} 竖线泳道=[${row.verticals.map((line) => laneOf(line.left + line.width / 2)).join(',')}] 斜线=[${row.diagonals.map((line) => `${laneOf(line.left + 1)}→${laneOf(line.right - 1)}`).join(',')}] 带=[${row.bands.map((item) => `top${item.box.top.toFixed(1)}+${item.box.height.toFixed(1)}→${item.box.bottom.toFixed(1)}`).join(',')}] 单元宽=${row.cell === null ? 'n/a' : row.cell.width.toFixed(1)}`)
     }
   }
   ok(`合并夹具渲染出 ${rows.length} 行提交`, rows.length === 6 ? undefined : `行数=${rows.length}`)
@@ -724,6 +758,16 @@ if (mergeCase.error !== undefined) {
     ok('提交树只有 2 条泳道（合并不再多开一条）',
       rows[0].laneBox.width === 2 * LANE_GAP ? undefined : `泳道区宽=${rows[0].laneBox.width}px，期望 ${2 * LANE_GAP}px`)
     ok('没有"一个节点都没有"的泳道', floating.length === 0 ? undefined : `无节点泳道=${floating.join(',')}`)
+
+    // 2a. 合并的额外父提交跨行画到目标节点上沿（夹具里跨 2 行：merge → main below merge）
+    const crossMerge = crossRowProblems(rows, laneBoxLeft, '合并夹具')
+    if (DEBUG) console.log(`  [merge] 跨行斜线 ${crossMerge.count} 条`)
+    ok('合并夹具：跨行斜线存在且落在目标节点的圆点上沿（覆盖跨行画法）',
+      crossMerge.problems.length > 0
+        ? crossMerge.problems.slice(0, 2).join('；')
+        : (crossMerge.count > 0 ? undefined : '一条跨行斜线都没有，断言是空跑'))
+    const mergeBandSpan = (rowOf('merge cust into main')?.bands ?? []).map((item) => item.box.height)
+    if (DEBUG) console.log(`  [merge] merge 行的斜线带高=${mergeBandSpan.map((value) => value.toFixed(1)).join(',')}`)
 
     // 2b. 已经取全时，末行不该再有指向窗口外的断头线（浅克隆 / 渲染到上限）
     const lastRow = rows[rows.length - 1]
@@ -788,6 +832,9 @@ if (realCase !== null) {
         const to = laneOf(seg.right - 1)
         lineLanes.add(from)
         lineLanes.add(to)
+        // 跨行斜线（合并的额外父提交一路画到目标节点）不参与"假尖角"判定：
+        // 它是本轮有意为之的画法，落点在下面某一行的圆点上。
+        if (seg.bottom > row.row.bottom + 1.5) continue
         // 分出斜线：记下"本行向右岔到哪条泳道"，下一行若又折回来就是那个假尖角
         if (to > from) outTo.set(index, { lane: to, subject: row.subject })
       }
@@ -813,11 +860,16 @@ if (realCase !== null) {
     if (DEBUG) {
       console.log(`  [real] 线端对齐检查覆盖了 ${realTips.nodes} 个「多条线汇入/岔出」的节点`)
       for (const item of realTips.checked) console.log(`    · ${item}`)
-    }
-    ok('真实仓库：同一节点出来的线端落在同一高度（且这种节点确实存在）',
+    }    ok('真实仓库：同一节点出来的线端落在同一高度（且这种节点确实存在）',
       realTips.problems.length === 0 && realTips.nodes > 0
         ? undefined
         : (realTips.problems.length > 0 ? `${realTips.problems.length} 处：${realTips.problems.slice(0, 3).join('；')}` : '一个都没有覆盖到，断言可能是空跑'))
+    const realCross = crossRowProblems(rows, laneBoxLeft, '真实仓库')
+    if (DEBUG) console.log(`  [real] 跨行斜线（合并的额外父提交）${realCross.count} 条`)
+    ok('真实仓库：合并的跨行斜线落在目标提交的圆点上沿（且确实存在跨行斜线）',
+      realCross.problems.length > 0
+        ? `${realCross.problems.length} 处：${realCross.problems.slice(0, 3).join('；')}`
+        : (realCross.count > 0 ? undefined : '一条跨行斜线都没有，断言是空跑'))
   }
 }
 
