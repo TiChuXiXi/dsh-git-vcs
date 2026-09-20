@@ -16,15 +16,80 @@
  * 所以这个脚本要在**放宽权限**（danger-full-access）或沙箱外运行；缺浏览器/缺 React 时自动跳过。
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SCRATCH = join(ROOT, '.npm-cache', 'domprobe')
-const CLIENT = join(ROOT, 'lib', 'client.js')
+/** 默认测仓库里的 lib/client.js；用 DOM_PROBE_CLIENT 可以指向另一份产物做前后对照。 */
+const CLIENT = process.env.DOM_PROBE_CLIENT ?? join(ROOT, 'lib', 'client.js')
 const PORT = Number(process.env.DOM_PROBE_PORT ?? 9337)
 const DEBUG = process.argv.includes('--debug')
+/** 可选：`--repo <路径>` 用真实仓库的数据在真浏览器里再跑一遍提交树（默认跳过）。 */
+const REPO = (() => {
+  const at = process.argv.indexOf('--repo')
+  return at > 0 && process.argv[at + 1] !== undefined ? process.argv[at + 1] : null
+})()
+
+/**
+ * 用与 host 半区逐字一致的 git 参数读一份仓库快照（提交 + 分支），供 `--repo` 模式使用。
+ * 只读，不改仓库状态。
+ */
+function readSnapshot(repoPath) {
+  const LOG_FORMAT = '%H%x1f%h%x1f%an%x1f%ae%x1f%ad%x1f%P%x1f%s%x1f%b%x1e'
+  const BRANCH_FORMAT = '%(refname)%1f%(refname:short)%1f%(objectname:short)%1f%(upstream:short)%1f%(upstream:track,nobracket)%1f%(committerdate:iso-strict)%1f%(subject)%1f%(objectname)%1f%(symref)'
+  const git = (args) => execFileSync('git', args, { cwd: repoPath, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+  const commits = []
+  for (const chunk of git(['log', '--no-color', '--date=iso-strict', `--pretty=format:${LOG_FORMAT}`, '--exclude=refs/stash', '--all', '-n', '2000']).split('\x1e')) {
+    const text = chunk.replace(/^\n+/, '')
+    if (text === '') continue
+    const parts = text.split('\x1f')
+    if (parts.length < 7) continue
+    commits.push({
+      hash: parts[0], shortHash: parts[1], author: parts[2], email: parts[3], date: parts[4],
+      parents: parts[5] === '' ? [] : parts[5].split(' '), subject: parts[6], body: (parts[7] ?? '').trim(),
+    })
+  }
+  const local = []
+  const remote = []
+  for (const line of git(['for-each-ref', `--format=${BRANCH_FORMAT}`, 'refs/heads', 'refs/remotes']).split('\n')) {
+    if (line.trim() === '') continue
+    const parts = line.split('\x1f')
+    if (parts.length < 7 || (parts[8] ?? '') !== '') continue
+    const ahead = /ahead (\d+)/.exec(parts[4])
+    const behind = /behind (\d+)/.exec(parts[4])
+    const row = {
+      ref: parts[0], name: parts[1], shortHash: parts[2], upstream: parts[3],
+      ahead: ahead === null ? 0 : Number(ahead[1]), behind: behind === null ? 0 : Number(behind[1]),
+      date: parts[5], subject: parts[6], hash: parts[7] ?? '',
+      kind: parts[0].startsWith('refs/heads/') ? 'local' : 'remote',
+    }
+    if (row.kind === 'local') local.push(row)
+    else remote.push(row)
+  }
+  const headBranch = (() => {
+    try {
+      return git(['symbolic-ref', '--short', 'HEAD']).trim()
+    } catch {
+      return ''
+    }
+  })()
+  const branch = headBranch === '' ? null : (local.find((item) => item.name === headBranch) ?? null)
+  const head = commits.length === 0 ? '' : commits[0]
+  return {
+    repo: {
+      cwd: repoPath, root: repoPath, branch: branch === null ? '' : branch.name, detached: branch === null,
+      shortHead: head === '' ? '' : head.shortHash, oid: head === '' ? '' : head.hash,
+      upstream: '', ahead: 0, behind: 0, remoteUrl: '', gitVersion: '',
+    },
+    config: { allowWrite: true, allowPush: false, allowDangerous: true, diffContextLines: 3, autoRefreshSeconds: 0 },
+    status: { branch: { oid: head === '' ? '' : head.hash, head: branch === null ? '' : branch.name, upstream: '', ahead: 0, behind: 0, detached: branch === null }, entries: [] },
+    commits, branches: { local, remote }, stashes: [], console: [],
+  }
+}
+
+const realSnapshot = REPO === null ? null : readSnapshot(REPO)
 
 const BROWSERS = [
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
@@ -76,6 +141,41 @@ const value = {
   status: { branch: { oid: commits[2].hash, head: 'main', upstream: '', ahead: 0, behind: 0, detached: false }, entries: [] },
   commits, branches, stashes: [], console: [],
 }
+
+/* --------- mode = 'merge'：合并线回归夹具（certbase-offline 的拓扑形状）
+ * 顺序：main tip(0) → cust tip(1) → merge(2) → cust work(3) → main below merge(4) → root(5)。
+ * merge(2) 的两个父提交是 cust work(3) 与 main below merge(4)，而 'main below merge' 早被
+ * 主干泳道（lane 0）期待 —— 这正是旧算法"向右突出又折返"的场景（它会多开一条 lane 2）。
+ * 另外给 'cust tip' 挂 4 个远程分支（含超长名）用来验标签截断与 +N。
+ */
+const mergeCommits = [
+  mk(0, 'main tip', [4]), mk(1, 'cust tip', [2]),
+  mk(2, 'merge cust into main', [3, 4]), mk(3, 'cust work', [5]),
+  mk(4, 'main below merge', [5]),
+  // 末行的父提交故意不放进窗口（模拟浅克隆 / 已到 2000 行渲染上限后的截断）：
+  // 已经取全的情况下，这条线永远等不到节点，不该在列表底部留一条断头线。
+  mk(5, 'root', [6]),
+]
+const lb = (name, commit) => ({ ref: 'refs/heads/' + name, name, hash: commit.hash, shortHash: commit.shortHash, kind: 'local', upstream: '', ahead: 0, behind: 0, date: commit.date, subject: commit.subject })
+const rb = (name, commit) => ({ ref: 'refs/remotes/' + name, name, hash: commit.hash, shortHash: commit.shortHash, kind: 'remote', upstream: '', ahead: 0, behind: 0, date: commit.date, subject: commit.subject })
+const mergeBranches = {
+  local: [lb('main', mergeCommits[0])],
+  remote: [
+    rb('origin/customer/guizhou-bianjian', mergeCommits[1]),
+    rb('origin/feature/a-very-long-branch-name', mergeCommits[1]),
+    rb('origin/release/2026-09-candidate', mergeCommits[1]),
+    rb('origin/dev', mergeCommits[1]),
+  ],
+}
+const mergeValue = {
+  repo: { cwd: 'D:/fixture', root: 'D:/fixture', branch: 'main', detached: false, shortHead: mergeCommits[0].shortHash, oid: mergeCommits[0].hash, upstream: '', ahead: 0, behind: 0, remoteUrl: '', gitVersion: '' },
+  config: { allowWrite: true, allowPush: true, allowDangerous: true, diffContextLines: 3, autoRefreshSeconds: 0 },
+  status: { branch: { oid: mergeCommits[0].hash, head: 'main', upstream: '', ahead: 0, behind: 0, detached: false }, entries: [] },
+  commits: mergeCommits, branches: mergeBranches, stashes: [], console: [],
+}
+const activeValue = window.__mode === 'real' ? window.__realValue
+  : (window.__mode === 'merge' ? mergeValue : value)
+
 window.__initCalls = 0
 window.__initPayload = null
 window.__inited = false
@@ -94,7 +194,12 @@ const call = async (channel, endpoint, payload) => {
       return { ok: false, error: { code: 'git-vcs/not-a-repo', message: '不是 git 仓库：D:/fixture', details: { cwd: 'D:/fixture' } } }
     }
   }
-  return { ok: true, value }
+  // 点提交行会拉 'show'：回一个带 commit 的载荷，提交详情里的「分支」一行才有得渲染。
+  if (endpoint === 'show') {
+    const found = activeValue.commits.find((item) => item.hash === (payload && payload.rev))
+    return { ok: true, value: { commit: found === undefined ? null : found, files: [], patch: '' } }
+  }
+  return { ok: true, value: activeValue }
 }
 `
 
@@ -190,36 +295,65 @@ if (logTab === undefined) return { error: '没找到 Log 页签按钮' }
 logTab.click()
 await wait(400)
 
-const rows = []
-for (const row of document.querySelectorAll('div[title]')) {
+const commitRows = () => [...document.querySelectorAll('div[title]')].filter((row) => {
   // 提交行的标志：行样式带 cursor: pointer **且**含 12px 的圆点 SVG
   //（提交树单元格自己也有 title，分支标签、工具栏按钮也会被 div[title] 捞到，都要排掉）
-  if ((row.getAttribute('style') ?? '').includes('cursor: pointer') === false) continue
-  if (row.querySelector('svg[width="12"]') === null) continue
+  if ((row.getAttribute('style') ?? '').includes('cursor: pointer') === false) return false
+  return row.querySelector('svg[width="12"]') !== null
+})
+
+const collectRows = () => commitRows().map((row) => {
   const laneBox = row.querySelector('div[style*="position: relative"]')
+  const cell = laneBox === null ? null : laneBox.parentElement
+  const chips = cell === null ? null : cell.children[1]
   const svgs = [...row.querySelectorAll('svg')]
   const linesSvg = svgs.find((node) => (node.getAttribute('viewBox') ?? '').split(' ')[3] === '100')
   const dotSvg = svgs.find((node) => node.getAttribute('width') === '12')
-  rows.push({
+  return {
     subject: row.getAttribute('title'),
     row: rect(row),
     laneBox: rect(laneBox),
+    cell: cell === null ? null : rect(cell),
+    chips: chips === null || chips === undefined
+      ? []
+      : [...chips.children].map((chip) => ({ text: chip.textContent || '', title: chip.getAttribute('title') || '', width: rect(chip).width })),
     linesSvg: linesSvg === undefined ? null : rect(linesSvg),
     dot: dotSvg === undefined ? null : rect(dotSvg),
     verticals: [...row.querySelectorAll('div')]
       .filter((node) => (node.getAttribute('style') ?? '').includes('width: 2px'))
       .map((node) => rect(node)),
     diagonals: linesSvg === undefined ? [] : [...linesSvg.querySelectorAll('line')].map((line) => rect(line)),
-  })
+  }
+})
+
+/* --------- 合并线回归（mode = merge）：几何 + 标签截断 + 提交详情的分支清单 */
+if (window.__mode === 'merge') {
+  const before = collectRows()
+  // 点一下挂满远程分支的那一行，看提交详情里的「分支」一行
+  const target = commitRows().find((row) => row.getAttribute('title') === 'cust tip')
+  if (target !== undefined) { target.click(); await wait(500) }
+  const branchRow = [...document.querySelectorAll('div')]
+    .find((node) => (node.textContent || '').startsWith('分支 · ') && node.children.length > 0)
+  return {
+    rows: before,
+    branchRow: branchRow === undefined
+      ? null
+      : {
+        text: branchRow.textContent || '',
+        chips: [...branchRow.children].map((chip) => ({ text: chip.textContent || '', width: rect(chip).width })),
+      },
+    detailText: branchRow === undefined ? '' : (branchRow.parentElement.textContent || ''),
+  }
 }
-return { rows, bodyText: document.body.innerText.slice(0, 200) }
+
+return { rows: collectRows(), bodyText: document.body.innerText.slice(0, 200) }
 `
 
 /* ------------------------------------------------------------------ 页面 + 浏览器 */
 
 mkdirSync(SCRATCH, { recursive: true })
 
-/** 跑一次页面（mode = 'normal' | 'no-repo'），返回页面里探针的返回值。 */
+/** 跑一次页面（mode = 'normal' | 'no-repo' | 'merge'），返回页面里探针的返回值。 */
 async function runProbe(mode, port) {
   const pagePath = join(SCRATCH, `harness-${mode}.html`)
   writeFileSync(pagePath, [
@@ -232,6 +366,8 @@ async function runProbe(mode, port) {
     `<script>${readFileSync(reactDom, 'utf8')}</script>`,
     `<script>${readFileSync(CLIENT, 'utf8')}</script>`,
     `<script>window.__mode = ${JSON.stringify(mode)}</script>`,
+    // 真实仓库数据（`--repo` 时才有）：单独一段脚本注入，避免拼进夹具字符串里转义出错。
+    `<script>window.__realValue = ${realSnapshot === null ? 'null' : JSON.stringify(realSnapshot)}</script>`,
     `<script>${fixture}</script>`,
     `<script>window.__probe = (async () => { try { ${pageScript} } catch (cause) { return { error: String((cause && cause.stack) || cause) } } })()</script>`,
     '</body></html>',
@@ -315,6 +451,9 @@ function evaluate(webSocketDebuggerUrl, expression, awaitPromise) {
 
 const measured = await runProbe('normal', PORT)
 const emptyCase = await runProbe('no-repo', PORT + 1)
+const mergeCase = await runProbe('merge', PORT + 2)
+// `--repo` 才跑：用真实仓库（比如 D:\zxh\code\certbase-offline）的数据在真浏览器里量几何。
+const realCase = REPO === null ? null : await runProbe('real', PORT + 3)
 
 /* ------------------------------------------------------------------ 断言 */
 
@@ -329,6 +468,11 @@ if (measured.error !== undefined) {
   const rowOf = (subject) => rows.find((row) => row.subject === subject)
   const laneBoxLeft = rows.length === 0 ? 0 : rows[0].laneBox.left
   const center = (lane) => laneBoxLeft + lane * LANE_GAP + LANE_GAP / 2
+  if (DEBUG) {
+    for (const row of rows) {
+      console.log(`  ${row.subject}: laneBox=${row.laneBox.left.toFixed(1)} 圆点=${row.dot === null ? 'n/a' : (row.dot.left + row.dot.width / 2).toFixed(1)} 竖线=[${row.verticals.map((line) => (line.left + line.width / 2).toFixed(1)).join(',')}] 斜线=[${row.diagonals.map((line) => `${line.left.toFixed(1)}~${line.right.toFixed(1)}`).join(',')}]`)
+    }
+  }
   ok(`渲染出 ${rows.length} 行提交`, rows.length === 8 ? undefined : `行数=${rows.length}（正文：${String(measured.bodyText).slice(0, 80)}）`)
 
   // 1. 斜线层高度必须等于行高（真机 bug：高度 auto → 按 viewBox 比例算成 100px，斜线落到下面几行）
@@ -455,6 +599,149 @@ if (emptyCase.error !== undefined) {
     && FEATURES.every((text) => after.tabs.includes(text)) && after.tabs.includes('Refresh')
     ? undefined
     : `点之前空态按钮数=${before.emptyButtons}、点之后空态消失=${after.emptyGone}，页签=${JSON.stringify(after.tabs)}`)
+}
+
+/* ---------------------------------------- 合并线 / 标签截断 / 详情分支清单（mode = merge）
+ * 这一组钉死三件事：
+ *   1. 合并的第二父提交若已被别的泳道期待，就并进那条泳道 —— 不许向右岔出再折回；
+ *   2. 画面上不许出现"一个节点都没有"的泳道（用户报的"没有开始的分支线"）；
+ *   3. 提交树列宽度受标签截断（≤ LABEL_MAX_PX）+ 每行最多 3 个标签约束，
+ *      完整分支清单在点开提交后的详情里。
+ */
+const LABEL_MAX_PX = 96
+const LABEL_MAX_CHIPS = 3
+if (mergeCase.error !== undefined) {
+  ok('合并线回归探针执行', mergeCase.error)
+} else {
+  const rows = mergeCase.rows
+  const rowOf = (subject) => rows.find((row) => row.subject === subject)
+  const laneBoxLeft = rows.length === 0 ? 0 : rows[0].laneBox.left
+  const center = (lane) => laneBoxLeft + lane * LANE_GAP + LANE_GAP / 2
+  const laneOf = (x) => Math.round((x - laneBoxLeft - LANE_GAP / 2) / LANE_GAP)
+  if (DEBUG) {
+    for (const row of rows) {
+      console.log(`  [merge] ${row.subject}: 圆点泳道=${row.dot === null ? 'n/a' : laneOf(row.dot.left + row.dot.width / 2)} 竖线泳道=[${row.verticals.map((line) => laneOf(line.left + line.width / 2)).join(',')}] 斜线=[${row.diagonals.map((line) => `${laneOf(line.left + 1)}→${laneOf(line.right - 1)}`).join(',')}] 单元宽=${row.cell === null ? 'n/a' : row.cell.width.toFixed(1)}`)
+    }
+  }
+  ok(`合并夹具渲染出 ${rows.length} 行提交`, rows.length === 6 ? undefined : `行数=${rows.length}`)
+
+  const merge = rowOf('merge cust into main')
+  const below = rowOf('main below merge')
+  if (merge === undefined || below === undefined) {
+    ok('合并行 / 主干行都在', '缺行')
+  } else {
+    // 1. 合并行只有一条斜线，且是**向左**并进主干泳道（lane 1 → lane 0）；不许出现 lane 2
+    const line = merge.diagonals.length === 1 ? merge.diagonals[0] : null
+    const problems = []
+    if (line === null) problems.push(`斜线数=${merge.diagonals.length}（期望 1）`)
+    else {
+      if (near(line.left, center(0) - 1, 2) === false) problems.push(`左端 x=${line.left.toFixed(1)}，期望主干泳道中心 ${(center(0) - 1).toFixed(1)}`)
+      if (near(line.right, center(1) + 1, 2) === false) problems.push(`右端 x=${line.right.toFixed(1)}，期望客户泳道中心 ${(center(1) + 1).toFixed(1)}`)
+    }
+    ok('合并线直接并进主干泳道（不向右突出再折返）', problems.length === 0 ? undefined : problems.join('；'))
+
+    // 主干行不该再有汇合斜线（旧算法在这里把 lane 2 折回来）
+    ok('主干行没有多余的汇合斜线', below.diagonals.length === 0
+      ? undefined
+      : `斜线数=${below.diagonals.length}`)
+
+    // 2. 泳道数 = 2（旧算法会多出一条 lane 2），且不许有无节点的泳道
+    const dotLanes = new Set(rows.filter((row) => row.dot !== null).map((row) => laneOf(row.dot.left + row.dot.width / 2)))
+    const lineLanes = new Set()
+    for (const row of rows) {
+      for (const seg of row.verticals) lineLanes.add(laneOf(seg.left + seg.width / 2))
+      for (const seg of row.diagonals) { lineLanes.add(laneOf(seg.left + 1)); lineLanes.add(laneOf(seg.right - 1)) }
+    }
+    const floating = [...lineLanes].filter((lane) => dotLanes.has(lane) === false)
+    ok('提交树只有 2 条泳道（合并不再多开一条）',
+      rows[0].laneBox.width === 2 * LANE_GAP ? undefined : `泳道区宽=${rows[0].laneBox.width}px，期望 ${2 * LANE_GAP}px`)
+    ok('没有"一个节点都没有"的泳道', floating.length === 0 ? undefined : `无节点泳道=${floating.join(',')}`)
+
+    // 2b. 已经取全时，末行不该再有指向窗口外的断头线（浅克隆 / 渲染到上限）
+    const lastRow = rows[rows.length - 1]
+    const dangling = lastRow.verticals.filter((line) => line.bottom > lastRow.row.bottom - 5)
+    ok('末行没有指向窗口外的断头线', dangling.length === 0
+      ? undefined
+      : `${dangling.length} 条线画到了行底（行底 ${lastRow.row.bottom.toFixed(1)}）`)
+
+    // 3. 分支标签：一行最多 3 个 + `+N`，单个不超过 LABEL_MAX_PX
+    const cust = rowOf('cust tip')
+    const chips = cust === undefined ? [] : cust.chips
+    const names = chips.map((chip) => chip.text)
+    ok(`一行最多 ${LABEL_MAX_CHIPS} 个标签，多出来折成 +N`,
+      chips.length === LABEL_MAX_CHIPS + 1 && names[LABEL_MAX_CHIPS] === `+${4 - LABEL_MAX_CHIPS}`
+        ? undefined
+        : `标签=${JSON.stringify(names)}`)
+    const tooWide = chips.filter((chip) => chip.width > LABEL_MAX_PX + 2)
+    ok(`单个分支标签不超过 ${LABEL_MAX_PX}px（省略号截断）`, tooWide.length === 0
+      ? undefined
+      : tooWide.map((chip) => `${chip.text}=${chip.width.toFixed(1)}px`).join('；'))
+    const longName = 'origin/feature/a-very-long-branch-name'
+    const withTitle = chips.find((chip) => chip.title.includes(longName))
+    ok('截断的标签仍带完整分支名（title）', withTitle === undefined ? `没找到带 ${longName} 的标签` : undefined)
+    ok('提交树列宽度受控（≤ 240px）', cust === undefined || cust.cell === null ? '没量到单元格' : (cust.cell.width <= 240 ? undefined : `列宽=${cust.cell.width.toFixed(1)}px`))
+
+    // 4. 点开提交后，详情里能看到指向它的**全部分支**（完整名字）
+    const branchRow = mergeCase.branchRow
+    if (branchRow === null) {
+      ok('提交详情里有「分支」一行', '没找到')
+    } else {
+      const texts = branchRow.chips.map((chip) => chip.text)
+      ok('提交详情的「分支」一行列出全部分支（完整名字、不截断）',
+        texts.length === 5 && texts[0] === '分支 · 4' && texts.includes(longName) && texts.includes('origin/customer/guizhou-bianjian')
+          ? undefined
+          : `内容=${JSON.stringify(texts)}`)
+      const clipped = branchRow.chips.slice(1).filter((chip) => chip.text.includes('…'))
+      ok('详情里的分支名不截断（没有省略号）', clipped.length === 0 ? undefined : JSON.stringify(clipped))
+    }
+  }
+}
+
+/* ---------------------------------------- 真实仓库（--repo）：同样的几何不变量
+ * 合成夹具只覆盖一种拓扑；这里把用户实际那个仓库（certbase-offline）的提交树整个喂进来，
+ * 逐行量：不许有"没有节点的泳道"、不许有"向右突出再折返"的尖角。
+ */
+if (realCase !== null) {
+  if (realCase.error !== undefined) {
+    ok(`真实仓库提交树（${REPO}）探针执行`, realCase.error)
+  } else {
+    const rows = realCase.rows
+    const laneBoxLeft = rows.length === 0 ? 0 : rows[0].laneBox.left
+    const laneOf = (x) => Math.round((x - laneBoxLeft - LANE_GAP / 2) / LANE_GAP)
+    const dotLanes = new Set()
+    const lineLanes = new Set()
+    const outTo = new Map()
+    for (let index = 0; index < rows.length; index++) {
+      const row = rows[index]
+      if (row.dot !== null) dotLanes.add(laneOf(row.dot.left + row.dot.width / 2))
+      for (const seg of row.verticals) lineLanes.add(laneOf(seg.left + seg.width / 2))
+      for (const seg of row.diagonals) {
+        const from = laneOf(seg.left + 1)
+        const to = laneOf(seg.right - 1)
+        lineLanes.add(from)
+        lineLanes.add(to)
+        // 分出斜线：记下"本行向右岔到哪条泳道"，下一行若又折回来就是那个假尖角
+        if (to > from) outTo.set(index, { lane: to, subject: row.subject })
+      }
+    }
+    const floating = [...lineLanes].filter((lane) => dotLanes.has(lane) === false).sort((left, right) => left - right)
+    ok(`真实仓库：${rows.length} 行提交都没有"没有节点的泳道"`, floating.length === 0 ? undefined : `无节点泳道=${floating.join(',')}`)
+    const spikes = []
+    for (const [index, out] of outTo) {
+      const next = rows[index + 1]
+      if (next === undefined) continue
+      for (const seg of next.diagonals) {
+        // 汇入斜线（in）：左上角是终点泳道、右下角是起点泳道
+        const to = laneOf(seg.left + 1)
+        const from = laneOf(seg.right - 1)
+        if (from === out.lane && to < out.lane) spikes.push(`${out.subject} → ${next.subject}（泳道 ${out.lane}）`)
+      }
+    }
+    ok('真实仓库：没有向右突出又折返的合并线',
+      spikes.length === 0 ? undefined : `${spikes.length} 处：${spikes.slice(0, 3).join('；')}`)
+    const wide = rows.filter((row) => row.cell !== null && row.cell.width > 240)
+    ok('真实仓库：提交树列宽度 ≤ 240px', wide.length === 0 ? undefined : wide.slice(0, 2).map((row) => `${row.cell.width.toFixed(1)}px`).join('；'))
+  }
 }
 
 console.log(results.join('\n'))
