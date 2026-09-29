@@ -8,26 +8,29 @@ Version Control 工具窗（`Alt+9`）与 Commit 工具窗（`Alt+0`）——本
 
 | 项目 | 值 |
 |------|-----|
-| 插件版本 | **`0.1.1`**（`package.json` 的 `version`，已发布到 npm：[dsh-git-vcs](https://www.npmjs.com/package/dsh-git-vcs)） |
-| 仓库 / Release | <https://github.com/TiChuXiXi/dsh-git-vcs>（tag `v0.1.1`） |
+| 插件版本 | **`0.1.2`**（`package.json` 的 `version`） |
+| 仓库 / Release | <https://github.com/TiChuXiXi/dsh-git-vcs> |
 | npm 包名 / 插件行 id | `dsh-git-vcs` / `git-vcs` |
-| 兼容的 DeepSeek Harness | **`@deepseek-ai/dsh` ≥ `0.1.5-rc.1`**（写在 `package.json` 的 `dsh.engines.dsh`；开发与验证版本就是 `0.1.5-rc.1`） |
-| 依赖的官方插件 | `@deepseek-ai/dsh-client-ui-sidebar-right`（客户端半区 `dsh.client.inject` 声明；随 web-app 分发，本机为 `0.1.5-rc.2`） |
+| 兼容的 DeepSeek Harness | **`@deepseek-ai/dsh` ≥ `0.1.7-rc.2`**（写在 `package.json` 的 `dsh.engines.dsh`；开发与验证版本就是 `0.1.7-rc.2`） |
+| 依赖的官方插件 | `@deepseek-ai/dsh-client-ui-sidebar-right`（客户端半区 `dsh.client.inject` 声明；随 web-app 分发，本机为 `0.1.7-rc.2`） |
 | 依赖的 host 服务 | `subprocess`（跑 git）、`connection`（RPC 信任栅栏）、`webServer`（注册 `/git-vcs` 路由） |
-| 依赖的 client 能力 | `sidebarRightTabs`（注册 tab 类型）、`slots`（`sidebar.right.pane.tab` / `.title`） |
+| 依赖的 client 能力 | `sidebarRightTabs`（注册 tab 类型）、`slots`（`sidebar.right.pane.tab` / `.title`）、标准 props `sessionId` + `useSessions`（取会话工作目录） |
 | git | 2.x；argv 调用（不进 shell），从 PATH 解析或由配置 `gitPath` 指定 |
 | Node.js | ESM；本机验证 `v22.23.2` |
 | 构建 | **零构建**：无编译步骤、无运行时依赖（host 半区不 import 任何 `@deepseek-ai/*` 值） |
 
-> 最低版本取 `0.1.5-rc.1` 的原因：host 侧走「自己注册 `webServer` 前缀路由」这条通道，需要
-> `webServer` 与 `connection` 两个服务同时可注入（细节见文末「RPC 通道是怎么挂的」）。更低版本未验证；
+> 最低版本取 `0.1.7-rc.2` 的原因：客户端半区取「会话工作目录」依赖 session 作用域 slot 的标准
+> prop `sessionId` —— DSH 0.1.7 的 `SessionListState` 移除了旧的 `current` 字段（0.1.5 时代用它定位
+> 当前会话），不升级取不到 cwd、面板会停在「未加载」。host 侧走「自己注册 `webServer` 前缀路由」
+> 这条通道，需要 `webServer` 与 `connection` 两个服务同时可注入（细节见文末「RPC 通道是怎么挂的」）。
 > 升级 DSH 后先跑一遍 `node scripts/verify-host.mjs`。
 
 ### 更新记录
 
 | 版本 | 主要变化 |
 |------|----------|
-| **0.1.1** | 提交树覆盖**所有分支**并支持滚到底续拉（issue #1，`--all` + `--skip`，单页 50 / 上限 2000 行）；提交树从单轨画法改成**多泳道图**（对齐 `git log --graph` / IDEA，分叉与汇合画在真正的分叉提交上）；修掉两处真机几何错位（斜线层 SVG 高度按 viewBox 比例算成 100px、连线比圆点偏右 1px）；**目录不是仓库时整页换成居中空态 + 一键 `git init`**（issue #2，可选初始分支名）；新增真浏览器几何/空态自检 `scripts/dom-probe.mjs`（18 条断言）与「客户端调用的端点 host 侧都存在」的结构性断言 |
+| **0.1.2** | 适配 **DSH 0.1.7**：会话工作目录改从 session 作用域的标准 prop `sessionId` + `useSessions` 选择器取（0.1.7 的 `SessionListState` 移除了旧的 `current` 字段，旧写法导致面板永远停在「（未加载）」）；两个探针夹具同步成 0.1.7 的真机 props 形态，避免"夹具与真机漂移、自检全绿而真机红" |
+| 0.1.1 | 提交树覆盖**所有分支**并支持滚到底续拉（issue #1，`--all` + `--skip`，单页 50 / 上限 2000 行）；提交树从单轨画法改成**多泳道图**（对齐 `git log --graph` / IDEA，分叉与汇合画在真正的分叉提交上）；修掉两处真机几何错位（斜线层 SVG 高度按 viewBox 比例算成 100px、连线比圆点偏右 1px）；**目录不是仓库时整页换成居中空态 + 一键 `git init`**（issue #2，可选初始分支名）；新增真浏览器几何/空态自检 `scripts/dom-probe.mjs`（18 条断言）与「客户端调用的端点 host 侧都存在」的结构性断言 |
 | 0.1.0 | 首个发布版：右侧栏「版本管理」页（Local Changes / Log / Console / Branches / Remotes / Stash）、按文件勾选提交、推送与凭据兜底、自挂 `/git-vcs` RPC 路由 |
 
 ## 插件说明
@@ -95,7 +98,7 @@ dsh plugin --profile web add dsh-git-vcs
 dsh --profile web --dump-config | Select-String "dsh-git-vcs"   # 必须看到 "# == dsh-git-vcs" 层
 ```
 
-装具体版本用 `dsh plugin --profile web add dsh-git-vcs@0.1.1`（pnpm 对已存在的依赖会认为"已是最新"，
+装具体版本用 `dsh plugin --profile web add dsh-git-vcs@0.1.2`（pnpm 对已存在的依赖会认为"已是最新"，
 只有带 `@版本` 才替换 spec）。本机 registry 是 npmmirror，必要时加 `--registry=https://registry.npmjs.org`。
 
 ### 更新到新版本
@@ -120,7 +123,7 @@ $p = "$env:USERPROFILE\.dsh\profiles\web"
 | 当前 spec | 命令 | 结果 |
 |-----------|------|------|
 | 任意（`0.1.0` 精确 / `^0.1.0`） | `add dsh-git-vcs@latest` 或 `@<版本>` | ✅ 升级，spec 一并改写 |
-| `^0.1.0`（当初用裸 `add dsh-git-vcs` 装的） | `update dsh-git-vcs` | ✅ 升到 0.1.1 |
+| `^0.1.0`（当初用裸 `add dsh-git-vcs` 装的） | `update dsh-git-vcs` | ✅ 升到最新的 0.1.x |
 | `0.1.0`（当初用 `add dsh-git-vcs@0.1.0` 装的） | `update dsh-git-vcs` | ❌ 精确 spec 下 pnpm 不动它 |
 | 同上 | `add dsh-git-vcs`（不带版本） | ❌ 「已满足」→ 仍停在旧版本 |
 
@@ -459,6 +462,7 @@ Amend 语义是修补上一次提交，**忽略勾选**（按钮文案里已注�
 | `node scripts\preview-check.mjs` | 在 `node:vm` 沙箱里装载真实 host 半区，按 host-runner 的 cloneJson 规则校验每个端点的信封是否无损 JSON，并确认 RPC 通道注册成功 |
 | `node scripts\status-probe.mjs [仓库]` | 用插件自己的 `status` / `diff` 读当前工作区，逐条打印 index/worktree 标记与三种 diff 长度——排查「列表说改了、差异却是空」 |
 | `node scripts\web-rpc-probe.mjs [插件目录]` | 在**隔离的 DSH_HOME** 里用完整 web 组合（base + web-app + 本插件）起临时实例（端口 3199），抓 host 日志并对 `/git-vcs` 做免认证探测：**401 = 路由在**（与 `/api` 一致）、**405 = 路由不在**（被静态兜底接手）。不传目录用当前源码；**传目录可以验证"别人从 npm 装到的那份"**，例如 `node scripts\web-rpc-probe.mjs "$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-git-vcs"` |
+| `node scripts\live-probe.mjs [--keep]` | **真机联调探针（诊断工具，不判红）**：在隔离 DSH_HOME 里起真实例（端口 3211），用 headless Chrome 打开**真实页面**（启动日志里带 token 的 URL），打印插件启动行、页面概览与「版本管理」相关的可交互元素。装配层问题（标准 props、会话作用域、认证后的 RPC 通路）只有真实例才暴露，而这类链路的 DOM 自动化（首启弹层 → 会话界面 → 展开右侧栏 → 点开 tab）做成硬断言会长期假红，所以只输出供人工判读 |
 
 浏览器半区的**布局/视觉**由 `scripts\dom-probe.mjs` 用 headless 浏览器量像素来守（泳道几何、圆点同心、
 斜线带边界与竖直段端点重合）；
@@ -468,6 +472,15 @@ Amend 语义是修补上一次提交，**忽略勾选**（按钮文案里已注�
 `subprocess=就绪 connection=就绪` 与 `RPC 通道已注册：/git-vcs`。缺失的原因是插件行的 `inject`
 没声明全（少了 `webServer` 会直接抛 `cannot get property "webServer" without inject`，整棵树加载失败），
 或用 `inject: []` + 一次性 `ctx.get()` 在服务就绪前就激活了。可直接用 `scripts/web-rpc-probe.mjs` 复现。
+
+**面板能打开、却一直显示「（未加载）」并提示"填写仓库路径后点「打开仓库」"**：说明客户端没拿到
+**会话工作目录**（不是 host 通道的问题——`repo/snapshot` 压根没发出去）。DSH 0.1.7 起会话清单快照
+`SessionListState` 只有 `ids` / `byId` / `phase` / `projectionsBySession`：0.1.5 时代用来定位"当前会话"
+的 `current` 字段**已被移除**，改由 session 作用域 slot 把当前会话作为标准 prop `sessionId` 交给组件
+（官方 `dsh-client-ui-sidebar-files` 在 0.1.7 里就是 `useSessions((s) => s.byId[sessionId]?.cwd)`）。
+`lib/client.js` 的 `sessionCwdOf()` 以 `sessionId` 为准、旧版本回退 `current`；改动这里时**两个探针夹具
+（`render-probe.mjs` / `dom-probe.mjs`）的标准 props 必须一起照抄真机形态**，否则会出现"自检全绿、
+真机红"（0.1.2 修的就是这一条）。
 
 ## 卸载
 

@@ -281,7 +281,10 @@ globalThis.window = { __ModuleLoader__: { load: (spec) => { loaded = spec } } }
 // 转圈图标靠 rAF 每帧改 state 做动画；探针里把它变成空操作，否则渲染永远不收敛。
 globalThis.requestAnimationFrame = () => 0
 globalThis.cancelAnimationFrame = () => {}
-await import(pathToFileURL(join(ROOT, 'lib', 'client.js')).href)
+// 默认测仓库里的 lib/client.js；用 RENDER_PROBE_CLIENT 可以指向另一份产物做**反向对照**
+// （例如把旧写法复制到临时文件，确认新夹具真能抓到"取不到会话 cwd"这类回归）。
+const CLIENT = process.env.RENDER_PROBE_CLIENT ?? join(ROOT, 'lib', 'client.js')
+await import(pathToFileURL(CLIENT).href)
 if (loaded === null || loaded.id !== 'dsh-git-vcs') throw new Error('client.js 没有通过 __ModuleLoader__ 注册')
 
 const half = loaded.factory((specifier) => {
@@ -307,8 +310,11 @@ if (GitBody === null) throw new Error('客户端半区没有注册 sidebar.right
 
 const render = () => h(GitBody, {
   ...face(),
-  // 真机里这是会话工作目录的 selector hook；探针直接给出仓库路径，让面板自动打开。
-  useSessions: () => ({ current: 's1', byId: { s1: { cwd: 'D:/fixture' } } }),
+  // 标准 props 照抄 DSH 0.1.7 的真机形态：session 作用域 slot 给 `sessionId`，
+  // `useSessions` 是「会话清单快照」的选择器 hook（0.1.5 那个 `state.current` 已被移除，
+  // 夹具若继续只给 current，真机上取不到 cwd、面板停在「未加载」而自检照样全绿）。
+  sessionId: 's1',
+  useSessions: (select) => select({ ids: ['s1'], byId: { s1: { cwd: 'D:/fixture' } }, phase: 'ready', projectionsBySession: {} }),
 })
 
 /* ------------------------------------------------------------------ 开始断言 */

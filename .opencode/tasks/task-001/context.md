@@ -52,9 +52,15 @@
 - `ctx.shell`（`dsh-shell`）也可，但它是"bash/pwsh 命令"语义且带沙箱模式；本插件用 subprocess 的 argv 形式更精确可控。
 - 沙箱提醒：host 侧 git 写入发生在工作区内，但 `~/.dsh/profiles` 安装动作仍可能被沙箱拒（见 memory.md）。
 
-### D. 会话/项目根从哪来
+### D. 会话/项目根从哪来（**2026-09-29 订正：DSH 0.1.7 起**）
 
-- client 侧：标准 prop `useSessions`（所有 scope 都有）给出 `SessionListState { ids, byId: Record<SessionId, SessionSummary{cwd?}>, current }`（`dsh-api-session-controller/lib/types/client/sessions/service.d.ts`）。取 `current` → `byId[current].cwd` 即"IDEA 的项目根"。
+- client 侧：`useSessions` 是**会话清单快照的选择器 hook**（`GlobalStandardProps`，所有 scope 都有），
+  快照类型是 `SessionListState { ids, byId: Record<SessionId, SessionSummary{cwd?}>, phase, projectionsBySession }`
+  （`dsh-api-session-controller/lib/types/client/sessions/service.d.ts`）—— **0.1.5 时代用来定位当前会话的 `current` 已被移除**。
+  "本 tab 属于哪个会话"改由 session 作用域 slot 的标准 prop **`sessionId`** 给出
+  （`SessionStandardProps`，见 `dsh-client-ui-session/lib/types/client/index.d.ts`），
+  所以默认仓库路径 = `useSessions((s) => s.byId[sessionId]?.cwd)`（官方 `dsh-client-ui-sidebar-files` 在 0.1.7 里就是这句）。
+  本插件实现在 `lib/client.js` 的 `sessionCwdOf()`（以 `sessionId` 为准，旧版本回退 `state.current`）。
 - host 侧对路径做校验：必须在配置允许的根之下，且必须是 git 工作树（`git rev-parse --show-toplevel`）。
 
 ### E. 浏览器半区硬约束
@@ -146,6 +152,7 @@
 | 2026-09-14 | 右侧栏 tab 的注册照抄 `dsh-client-ui-sidebar-files` 的两阶段写法：`ctx.sidebarRightTabs.register({id, kind, title, guide})` + `slots.inject('sidebar.right.pane.tab', () => slots.register({name, key: id, inject}, Body))` | 该包是产品内唯一活着的同类实现，照抄即对齐官方契约（keyed slot 用 `key` 而非 `id`） |
 | 2026-09-14 | 客户端只 `require('react')`，UI 全用 `React.createElement`、样式全内联；不用 CSS Modules、不写 `document.head` | 零构建路线下这是唯一不触碰构建链的写法；避开 purity 门禁与全局样式污染 |
 | 2026-09-14 | 写操作分三级门禁：`allowWrite` / `allowDangerous`（reset·revert·cherry-pick·删分支·回滚文件）/ `allowPush`（默认 false） | push 与破坏性操作默认最保守；危险操作在 UI 内还要过一次内联确认条 |
+| 2026-09-29 | 会话工作目录改走标准 prop `sessionId` + `useSessions` 选择器（0.1.7 起；旧版回退 `state.current`），`dsh.engines.dsh` 提到 `>=0.1.7-rc.2` | DSH 0.1.7 的 `SessionListState` 移除了 `current`，旧写法让面板永远停在「（未加载）」；两个探针夹具必须同步成真机 props 形态，否则"自检全绿、真机红" |
 
 ## 实现进展（2026-09-14）
 

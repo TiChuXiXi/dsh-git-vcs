@@ -778,6 +778,44 @@ origin/customer/guizhou-bianjian 三条 ref）与三张对照截图，指出三�
 - render-probe **15/15**、`--real` **18/18**、verify-host **64/64**、preview-check 全过。
 - 提交：`592cacf fix(log): 合并的岔出斜线跨行画到目标节点`。
 
+## 2026-09-29 DSH 0.1.7 适配（插件 0.1.2）
+
+**现象**：用户升级到 `@deepseek-ai/dsh@0.1.7-rc.2` 后，右侧栏「版本管理」面板能打开，但分支胶囊
+一直显示「（未加载）」、路径框为空，中间提示"填写仓库路径后点「打开仓库」（默认取当前会话工作目录）"。
+
+**定位**（逐层排除，不猜）：
+- **host 侧没问题**：对正在跑的实例探 `/git-vcs/repo/snapshot` 与 `/api/__probe` 都回 **401**
+  （路由在、信任栅栏生效）；`scripts/web-rpc-probe.mjs` 在隔离实例里复现出
+  `subprocess=就绪 connection=就绪` + `RPC 通道已注册：/git-vcs`。
+- **客户端侧**：0.1.7 的 `SessionListState` 只有 `ids` / `byId` / `phase` / `projectionsBySession`
+  —— 0.1.5 时代用来定位当前会话的 `current` **已被移除**；官方 `dsh-client-ui-sidebar-files` 在 0.1.7
+  里走 session 作用域的标准 prop `sessionId`（`useSessions((s) => s.byId[sessionId]?.cwd)`）。
+  旧写法 `sessions.byId[sessions.current]` 取到 `undefined` → `applied` 恒为空 → 面板**连
+  `repo/snapshot` 都不发**（`lib/client.js` 里 `if (applied === '') return`），所以既没有报错也没有数据。
+- 顺带核对了 0.1.7 的其余契约：`slots.register`（inject 工厂签名变成 `(sessionId, actions) => face`）、
+  `sidebarRightTabs.register`、`connection.rpc.call(channel, endpoint, payload)`、
+  `webServer.register`、`connection.requestRejection`、`subprocess.spawn` / `resolveExecutable`、
+  `handle.collected.*.readFrom` —— 均未变。
+
+**改动**：
+- `lib/client.js`：新增 `sessionCwdOf(state, sessionId)`（以标准 prop `sessionId` 为准，旧版本回退
+  `state.current`），`GitBody` 改用它做默认仓库路径；引导页入口补上 0.1.7 要求的稳定 `id`。
+- `package.json`：`version` 0.1.1 → **0.1.2**；`dsh.engines.dsh` `>=0.1.5-rc.1` → **`>=0.1.7-rc.2`**
+  （不能写 `>=0.1.7`：semver 下 rc 小于正式版，会把当前跑的 `0.1.7-rc.2` 判为不满足）。
+- 夹具同步：`scripts/render-probe.mjs` / `scripts/dom-probe.mjs` 的标准 props 改成 0.1.7 形态
+  （`sessionId` + 选择器版 `useSessions`）；`render-probe.mjs` 新增 `RENDER_PROBE_CLIENT` 以便反向对照。
+- 新增 `scripts/live-probe.mjs`：隔离 DSH_HOME 起真实例 + headless 浏览器打开带 token 的真实页面，
+  打印插件启动行与页面可交互元素（诊断工具，不判红 —— 首启流程 / 右侧栏 DOM 的自动化会长期假红）。
+- README：兼容性表、更新记录（0.1.2 行）、排障新增「（未加载）」一节、自检表加 `live-probe.mjs`。
+
+**验证**：`verify-host` **64/64**、`render-probe` **15/15**、`dom-probe` **33/33**、`web-rpc-probe`
+在 0.1.7 下 401 = 路由在。**反向对照**：用 `.npm-cache/make-old-client.mjs` 把 cwd 取法还原成 0.1.5
+旧写法，新夹具立刻报 **12 条红**（"没有发出 repo/snapshot"…）—— 证明夹具真咬得住这次的问题。
+用户真机确认：插件正常加载打开、能打开目录所在的 git 仓库。
+
+**未做**：没有 push、没有发 npm 0.1.2（本次改动只落在本地 `main` 的工作区提交里）。
+
+
 
 
 

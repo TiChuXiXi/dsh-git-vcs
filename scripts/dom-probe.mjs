@@ -227,7 +227,9 @@ half.apply({
 })
 ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(GitBody, {
   ...face(),
-  useSessions: () => ({ current: 's1', byId: { s1: { cwd: 'D:/fixture' } } }),
+  // 标准 props 照抄 DSH 0.1.7 的真机形态（见 render-probe.mjs 的同名夹具说明）。
+  sessionId: 's1',
+  useSessions: (select) => select({ ids: ['s1'], byId: { s1: { cwd: 'D:/fixture' } }, phase: 'ready', projectionsBySession: {} }),
 }))
 await wait(700)
 
