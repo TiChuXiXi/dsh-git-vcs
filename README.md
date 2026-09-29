@@ -8,8 +8,8 @@ Version Control 工具窗（`Alt+9`）与 Commit 工具窗（`Alt+0`）——本
 
 | 项目 | 值 |
 |------|-----|
-| 插件版本 | **`0.1.2`**（`package.json` 的 `version`） |
-| 仓库 / Release | <https://github.com/TiChuXiXi/dsh-git-vcs> |
+| 插件版本 | **`0.1.2`**（`package.json` 的 `version`，已发布到 npm：[dsh-git-vcs](https://www.npmjs.com/package/dsh-git-vcs)） |
+| 仓库 / Release | <https://github.com/TiChuXiXi/dsh-git-vcs>（tag `v0.1.2`） |
 | npm 包名 / 插件行 id | `dsh-git-vcs` / `git-vcs` |
 | 兼容的 DeepSeek Harness | **`@deepseek-ai/dsh` ≥ `0.1.7-rc.2`**（写在 `package.json` 的 `dsh.engines.dsh`；开发与验证版本就是 `0.1.7-rc.2`） |
 | 依赖的官方插件 | `@deepseek-ai/dsh-client-ui-sidebar-right`（客户端半区 `dsh.client.inject` 声明；随 web-app 分发，本机为 `0.1.7-rc.2`） |

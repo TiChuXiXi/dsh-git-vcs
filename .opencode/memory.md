@@ -10,7 +10,9 @@
 - **清单**：`package.json` 的 `dsh.bundle.patch` → `cordis.patch.yml`；Web 半区另加 `dsh.client` + `exports["./client"]`。**不声明 `dsh.profile`**。
 - **入口**：`index.js` 导出 `name` / `inject` / `apply(ctx, config)`；副作用只写在 `apply()` 内。
 - **依赖锁版本**：`@deepseek-ai/dsh-*` → `^0.1.5-rc.1`、`@deepseek-ai/cordis` → `^4.0.2`、`@deepseek-ai/schemastery` → `^3.18.2`；禁止 `latest` / `*`。
-- **当前状态**（2026-09-14）：仓库已 `git init`（分支 `main`），完成记忆体系初始化与首个提交；插件骨架、包名、能力边界均未定。远端未配置。
+- **当前状态**（2026-09-29）：插件已发布 **`dsh-git-vcs@0.1.2`**（npm `latest` + GitHub Release + tag `v0.1.2` = `51ebac6`）；
+  本机 `~/.dsh/profiles/web` 的依赖已从 `link:D:/zxh/code/git-plugin` 切到 registry 版 `0.1.2`（重启 `dsh web` 生效）；
+  要回到本地调试：`dsh plugin --profile web add link:D:/zxh/code/git-plugin`。远端 = `https://github.com/TiChuXiXi/dsh-git-vcs.git`（分支 `main`，已 push）。
 
 ## 跨任务技术决策
 
@@ -25,8 +27,7 @@
 
 ## 已知全局问题
 
-- **npm 缓存目录被沙箱拦（EPERM）** → npm 命令一律加 `--cache D:\zxh\deepseek\.npm-cache-tmp`。
-- **registry 默认 npmmirror** → 安装 `@deepseek-ai/*` 官方包必须加 `--registry https://registry.npmjs.org`。
+- **registry 默认 npmmirror** → 安装 `@deepseek-ai/*` 官方包、发布插件都必须加 `--registry https://registry.npmjs.org`（npmmirror 会滞后，直查具体版本端点比 `npm view` 更快看到新版本）。
 - **pnpm 不在 PATH** → 先 `$env:Path = "C:\Users\zdz20\AppData\Roaming\npm;" + $env:Path`，可执行文件为 `C:\Users\zdz20\AppData\Roaming\npm\pnpm.cmd`。
 - **profile 目录在 workspace 外**（`~/.dsh/profiles/<name>`）→ `dsh plugin` 写入可能被沙箱拒绝，原样重试并带 `sandbox_permissions: danger-full-access` + justification。
 - **codebase-memory-mcp 已安装连通，但本项目未建索引** → 首次语义检索前需对本目录执行 `index_repository`。
@@ -34,7 +35,7 @@
 - **跨盘符 `dsh plugin add` 会生成坏 junction**：插件在 `D:`、profile 在 `C:\Users\zdz20\.dsh\profiles\web`，pnpm 无法算相对路径 → 链接目标被拼成 `<profile>\D:\...`，dsh 判定 `declares no dsh.bundle`，插件不进 `dsh.profile.bundles`。修法：删链接后 `cmd /c mklink /J <profile>\node_modules\<pkg> <插件绝对路径>`，再 `dsh plugin --profile web install` 对账（详见 README「跨盘符安装坑」）。
 - **写 `~/.dsh/profiles/**` 需要提权**：本会话沙箱为 workspace-write，`dsh plugin add` 首次 EPERM；一次 danger-full-access 提权被用户拒绝后不再重试，改为把命令写进 README 由用户自行执行。
 - **沙箱内 git 网络操作的两个坑**（本机已实测）：①`http.sslBackend=schannel` 会 `SEC_E_NO_CREDENTIALS`，改用 `-c http.sslBackend=openssl`；②凭据助手（`credential-manager` / `store`）经 msys `sh -c` 启动，而沙箱下 `sh.exe` 建不了信号管道 → 助手与交互输入都不可用，必须绕开助手（push 到内嵌凭据的 URL）或提权执行。
-- **远端仓库**：`origin` = `https://github.com/TiChuXiXi/dsh-git-repo.git`（分支 `main`，已设上游）；远端初始只有一个 `Initial commit`（仅 LICENSE），已用 `--allow-unrelated-histories` 合并进本地历史。
+- **远端仓库**：`origin` = `https://github.com/TiChuXiXi/dsh-git-vcs.git`（分支 `main`，已发布 `0.1.0` / `0.1.1` / `0.1.2`）。push 必须带 `-c http.sslBackend=openssl` + 代理（`-c http.proxy=http://127.0.0.1:7890 -c https.proxy=http://127.0.0.1:7890`）+ 内嵌凭据 URL，**推完补一次 `git fetch origin`**（按 URL 推不会更新本地 remote refs，否则会误判"没推上去"）。
 
 ## 常用命令
 

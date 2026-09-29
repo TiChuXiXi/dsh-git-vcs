@@ -813,7 +813,27 @@ origin/customer/guizhou-bianjian 三条 ref）与三张对照截图，指出三�
 旧写法，新夹具立刻报 **12 条红**（"没有发出 repo/snapshot"…）—— 证明夹具真咬得住这次的问题。
 用户真机确认：插件正常加载打开、能打开目录所在的 git 仓库。
 
-**未做**：没有 push、没有发 npm 0.1.2（本次改动只落在本地 `main` 的工作区提交里）。
+**当时未做**：push 与 npm 发布 —— 随后按用户要求完成，见下一节。
+
+## 2026-09-29 发布 0.1.2（npm + GitHub Release + profile 切 registry）
+
+- **npm**：`dsh-git-vcs@0.1.2`（`latest`），shasum `ef20fb1951b12d703c8a6a939b7914c9148dd9d2`
+  （dry-run 与正式发布一致）；发布物 6 个文件（LICENSE / README.md / cordis.patch.yml / index.js /
+  lib/client.js / package.json），**无 `.npmrc`**。发布用 `--registry https://registry.npmjs.org` +
+  项目内 `--cache .npm-cache`；令牌走项目级 `.npmrc` 的 `${NPM_TOKEN}` 展开（`npm whoami` = `tichuxixi`）。
+- **GitHub**：main `b52f981..51ebac6`（8 个提交）fast-forward push；tag `v0.1.2` → `51ebac6`；
+  Release <https://github.com/TiChuXiXi/dsh-git-vcs/releases/tag/v0.1.2>（非 draft、非 prerelease）。
+  push 用 `-c http.sslBackend=openssl` + 代理 + 内嵌凭据 URL，推完补了 `fetch origin --tags`。
+- **profile**：`~/.dsh/profiles/web` 的依赖从 `link:D:/zxh/code/git-plugin` 切成 `dsh-git-vcs: 0.1.2`；
+  安装副本与本地源码**逐文件 sha256 全部一致**，副本里没有 `.npmrc` / `.git` / `.opencode` / `scripts` /
+  `.npm-cache`。`dsh.profile.bundles` 仍含 `dsh-git-vcs`。
+- **端到端**：隔离实例加载 **npm 安装副本** → 日志 `host 半区激活：subprocess=就绪 connection=就绪`
+  与 `RPC 通道已注册：/git-vcs`；`/git-vcs/repo/snapshot` 回 401、不存在的路径回 405（探测判据有效）。
+- **待用户动作**：重启 `dsh web` 才会用上 npm 版（当前进程里仍是 link 版，两者代码逐字节相同）。
+- **环境清理**：本次一次性验证脚本踩到 PowerShell 只读变量（`$home` / `$pid`），误建了 `~\profiles`、
+  `~\storages` 并残留了两个隔离实例（端口 3199 / 3211）——已全部删除/结束，现在只剩用户的 3080 实例。
+  教训已写进 `LESSONS.md`（工具链分类）。
+
 
 
 
