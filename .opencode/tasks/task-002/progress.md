@@ -7,7 +7,10 @@
 - 权限更新后已通过 SSH 推送 develop，远端提交为 `6d5510da2c99b983f8c64985ce9a717d72219b90`。
 - 已合并到本地 main，完善 0.2.0 README 与发布说明；修复 verify-host 对合并提交的误报，使用独立双文件提交夹具。
 - 发布前 npm test 与完整 DSH 集成复测通过；发布包包含 6 个预期文件，无凭据配置。
-- GitHub Release 和 npm 的最终发布状态将在完成后追加；当前环境 NPM_TOKEN 未配置。
+- main 与标签 v0.2.0 已推送；发布提交 `13a06d5311f6db7759eebc2f02f60a2019ee80a1`。
+- GitHub Release 已发布并标记 Latest：https://github.com/TiChuXiXi/dsh-git-vcs/releases/tag/v0.2.0 。
+- npm 尚未发布：当前环境 NPM_TOKEN 未配置，已请用户配置新令牌到本地环境，不记录任何令牌值。
+- 待发布包：`/private/tmp/dsh-release-0.2.0.pn8WHU/dsh-git-vcs-0.2.0.tgz`；SHA-1 `66f2e12e3cd4cfb4c90c67f341238103363ae2f4`，对应 v0.2.0 的 6 个发行文件。续做时先核对 npm 版本，避免重复发布，并更新 Release 的 npm 状态。
 
 ## 完成项
 
