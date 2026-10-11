@@ -8,8 +8,8 @@ Version Control 工具窗（`Alt+9`）与 Commit 工具窗（`Alt+0`）——本
 
 | 项目 | 值 |
 |------|-----|
-| 插件版本 | **`0.2.0`**（本次源码更新在 `develop` 分支；未发布 npm 或 Release） |
-| 仓库 / 分支 | <https://github.com/TiChuXiXi/dsh-git-vcs/tree/develop> |
+| 插件版本 | **`0.2.0`** |
+| 仓库 / 分支 | <https://github.com/TiChuXiXi/dsh-git-vcs/tree/main> |
 | npm 包名 / 插件行 id | `dsh-git-vcs` / `git-vcs` |
 | 兼容的 DeepSeek Harness | **`@deepseek-ai/dsh` ≥ `0.2.1-alpha.2`**；验证基线为官方 `master` 提交 `d743267388641bc76f17c45ce8b4c231aed1d32c` |
 | 依赖的官方插件 | `@deepseek-ai/dsh-client-ui-sidebar-right`（随 web-app 分发，已验证 `0.2.1-alpha.2`） |
@@ -22,25 +22,33 @@ Version Control 工具窗（`Alt+9`）与 Commit 工具窗（`Alt+0`）——本
 > 2026-10-12 查询时，官方仓库最新版及 npm `alpha` 为 `0.2.1-alpha.2`，npm `latest` 仍为
 > `0.2.0-rc.2`。本次以官方仓库最新版为验证目标，旧宿主未列入本版支持范围。
 > session 作用域的 `sessionId` + `useSessions`、右侧栏槽位和 subprocess 接口仍适用。
-> 完整验证记录和未覆盖范围见 [兼容性测试报告](docs/compatibility-0.2.1.md)。
+> 完整验证记录和未覆盖范围见 [兼容性测试报告](https://github.com/TiChuXiXi/dsh-git-vcs/blob/v0.2.0/docs/compatibility-0.2.1.md)。
 
-### 使用 develop 中的更新
+### 快速开始
 
-先安装 `@deepseek-ai/dsh@0.2.1-alpha.2`，然后在仓库目录执行：
+先准备 Node.js ≥ 22.12.0、Git 和兼容的 DSH：
 
 ```sh
-git switch develop
-npm test
-dsh plugin --profile web add .
+npm install -g @deepseek-ai/dsh@0.2.1-alpha.2
+dsh plugin --profile web add dsh-git-vcs@0.2.0 --registry=https://registry.npmjs.org
+dsh web
 ```
 
-重启 `dsh web` 并刷新浏览器。本次只更新 GitHub 的 `develop`；下面的 npm 安装章节仍是已发布旧版本的安装方式。
+在浏览器右侧栏的「+」或引导入口中选择「版本管理」，打开已有 Git 仓库所在的会话。
+若 DSH 已经运行，安装或升级插件后必须重启进程，再刷新浏览器。
+本插件安装到 DSH 的 `web` profile；单独执行 `npm install -g dsh-git-vcs` 不会注册插件。
+
+**升级注意：** 0.2.0 提高了宿主和 Node.js 最低版本，不保证兼容 DSH 0.1.x。
+仍使用 DSH 0.1.7 的用户请保留插件 0.1.2；不要只升级插件而保留旧宿主。
+声明的最低版本不代表已验证所有未来版本；本次实际验证基线为上表所列固定版本。
+
+[安装与升级](#安装) · [使用方法](#使用方法) · [配置](#配置) · [安全边界](#安全边界) · [自检与排障](#自检与排障)
 
 ### 更新记录
 
 | 版本 | 主要变化 |
 |------|----------|
-| **0.2.0（develop）** | 对齐 DSH `0.2.1-alpha.2`；加固 RPC 请求校验及取消传播；修复首次提交前取消暂存、通配符文件误操作、仓库路径逃逸；贮藏支持包含未跟踪文件并准确报告空操作；补齐跨平台测试与完整宿主集成测试 |
+| **0.2.0** | 对齐 DSH `0.2.1-alpha.2`；加固 RPC 请求校验及取消传播；修复首次提交前取消暂存、通配符文件误操作、仓库路径逃逸；贮藏支持包含未跟踪文件并准确报告空操作；补齐跨平台测试与完整宿主集成测试 |
 | **0.1.2** | 适配 **DSH 0.1.7**：会话工作目录改从 session 作用域的标准 prop `sessionId` + `useSessions` 选择器取（0.1.7 的 `SessionListState` 移除了旧的 `current` 字段，旧写法导致面板永远停在「（未加载）」）；两个探针夹具同步成 0.1.7 的真机 props 形态，避免"夹具与真机漂移、自检全绿而真机红" |
 | 0.1.1 | 提交树覆盖**所有分支**并支持滚到底续拉（issue #1，`--all` + `--skip`，单页 50 / 上限 2000 行）；提交树从单轨画法改成**多泳道图**（对齐 `git log --graph` / IDEA，分叉与汇合画在真正的分叉提交上）；修掉两处真机几何错位（斜线层 SVG 高度按 viewBox 比例算成 100px、连线比圆点偏右 1px）；**目录不是仓库时整页换成居中空态 + 一键 `git init`**（issue #2，可选初始分支名）；新增真浏览器几何/空态自检 `scripts/dom-probe.mjs`（18 条断言）与「客户端调用的端点 host 侧都存在」的结构性断言 |
 | 0.1.0 | 首个发布版：右侧栏「版本管理」页（Local Changes / Log / Console / Branches / Remotes / Stash）、按文件勾选提交、推送与凭据兜底、自挂 `/git-vcs` RPC 路由 |
@@ -52,7 +60,7 @@ dsh plugin --profile web add .
 - **一个右侧栏 tab 类型**：`版本管理`（同时在右侧栏引导页注册一个胶囊入口，`order: 20`），
   内容全部由本插件渲染；**分栏、全屏、展开/收起**由官方 `@deepseek-ai/dsh-client-ui-sidebar-right`
   （右侧栏的停靠面与 header 展开控件）提供，本插件不碰布局。
-- **一条 host RPC 通道** `/git-vcs`（29 个端点，见下表）：所有 git 调用都在 host 进程里以 argv 形式执行。
+- **一条 host RPC 通道** `/git-vcs`（端点见下表）：所有 git 调用都在 host 进程里以 argv 形式执行。
 - **六页功能**：Local Changes / Log / Console / Branches / Remotes / Stash。
 - **目录不是仓库时**：整页换成居中的空态 + 「在当前目录初始化 Git 仓库」按钮（`repo/init`）。
 
@@ -104,101 +112,61 @@ dsh plugin --profile web add .
 
 ### 1. 从 npm 安装（推荐）
 
-```powershell
-$env:Path = "C:\Users\zdz20\AppData\Roaming\npm;" + $env:Path
-dsh plugin --profile web add dsh-git-vcs
-dsh --profile web --dump-config | Select-String "dsh-git-vcs"   # 必须看到 "# == dsh-git-vcs" 层
+在 macOS / Linux 终端或 Windows PowerShell 执行：
+
+```sh
+dsh plugin --profile web add dsh-git-vcs@0.2.0 --registry=https://registry.npmjs.org
+dsh --profile web --dump-config
 ```
 
-装具体版本用 `dsh plugin --profile web add dsh-git-vcs@0.1.2`（pnpm 对已存在的依赖会认为"已是最新"，
-只有带 `@版本` 才替换 spec）。本机 registry 是 npmmirror，必要时加 `--registry=https://registry.npmjs.org`。
+输出中应包含 `dsh-git-vcs` 的配置层。Windows 若找不到 `dsh`，请确认 npm 全局可执行目录在 PATH 中，
+不要直接复制其他机器的用户目录。
 
 ### 更新到新版本
 
-已装过旧版本时，用下面任意一条（`@latest` 最省事，写死版本最可控）：
+升级前先满足本页的 DSH / Node.js 要求，再执行上面的指定版本安装命令。
+已有的精确版本或 `^0.1.x` 依赖不会自然跨到 0.2.0，明确指定 `@0.2.0` 可避免停留在旧版本。
+安装命令也可将原本的本地路径依赖替换为 registry 包。
 
-```powershell
-dsh plugin --profile web add dsh-git-vcs@latest        # 或 dsh-git-vcs@0.1.2 这种具体版本
-dsh --profile web --dump-config | Select-String "dsh-git-vcs"   # 仍应看到 "# == dsh-git-vcs" 层
+升级后**重启 `dsh web` 并刷新浏览器**。使用镜像源时可能存在同步延迟，排障时显式使用 npm 官方源。
+可通过以下命令查看官方源的实际版本：
+
+```sh
+npm view dsh-git-vcs version --registry=https://registry.npmjs.org
 ```
 
-然后**重启 `dsh web`**（host 半区是进程内代码），浏览器里再 `Ctrl+Shift+R`。
+### 2. 本地源码安装（开发调试）
 
-先看自己当前是哪一种 spec，能省一次试错：
-
-```powershell
-$p = "$env:USERPROFILE\.dsh\profiles\web"
-(Get-Content "$p\package.json" -Raw | ConvertFrom-Json).dependencies.'dsh-git-vcs'
-(Get-Content "$p\node_modules\dsh-git-vcs\package.json" -Raw | ConvertFrom-Json).version
+```sh
+git clone https://github.com/TiChuXiXi/dsh-git-vcs.git
+cd dsh-git-vcs
+git switch main
+npm test
+dsh plugin --profile web add .
 ```
 
-| 当前 spec | 命令 | 结果 |
-|-----------|------|------|
-| 任意（`0.1.0` 精确 / `^0.1.0`） | `add dsh-git-vcs@latest` 或 `@<版本>` | ✅ 升级，spec 一并改写 |
-| `^0.1.0`（当初用裸 `add dsh-git-vcs` 装的） | `update dsh-git-vcs` | ✅ 升到最新的 0.1.x |
-| `0.1.0`（当初用 `add dsh-git-vcs@0.1.0` 装的） | `update dsh-git-vcs` | ❌ 精确 spec 下 pnpm 不动它 |
-| 同上 | `add dsh-git-vcs`（不带版本） | ❌ 「已满足」→ 仍停在旧版本 |
-
-其它注意点：
-
-- 命令别在插件源码目录里跑：那里的项目级 `.npmrc` 用 `${NPM_TOKEN}`，未设该变量时 pnpm 会警告
-  `Failed to replace env in config`（无害，但吵）。
-- npmmirror 会滞后几分钟到几小时；`npm view dsh-git-vcs version --registry https://registry.npmmirror.com`
-  还看不到新版本时，加 `--registry=https://registry.npmjs.org` 直接走官方源。
-- 当初若是**本地路径**装的（`link:…`），同一条 `add dsh-git-vcs@<版本>` 会把它换成 registry 版本。
-- `dsh.profile.bundles` 里已经有 `dsh-git-vcs`，更新不需要再动它。
-
-### 2. 本地路径安装（开发调试）
-
-```powershell
-dsh plugin --profile web add D:\zxh\code\git-plugin
-```
+稳定版本源码可切换到标签 `v0.2.0`；开发中的改动位于 `develop`。
+发布包零构建、无运行时依赖；浏览器和完整宿主测试另需相应测试环境。
 
 ### 3. 改完代码怎么生效
 
 | 改了哪里 | 生效方式 |
 |----------|----------|
-| `index.js`（host）、`cordis.patch.yml` | **重启 `dsh web`**（bundle 层在进程启动时加载，刷新页面不够） |
-| `lib/client.js`（浏览器） | 刷新页面即可 |
+| `index.js`（host）、`cordis.patch.yml` | 重启 `dsh web`，仅刷新页面不够 |
+| `lib/client.js`（浏览器） | 刷新页面；必要时强制刷新 |
 
-期望日志（启动时各一行，缺任意一行说明能力没挂上）：
+启动时应看到：
 
-```
+```text
 [dsh-git-vcs] host 半区激活：subprocess=就绪 connection=就绪
 [dsh-git-vcs] RPC 通道已注册：/git-vcs
 ```
 
-### 4. 跨盘符安装坑（历史/本地开发才会遇到）
+### 4. Windows 本地路径安装排障
 
-> 只有「本地路径安装」（第 2 种）且插件目录与 profile 不同盘符时才会踩到；从 npm 安装不受影响。
-
-插件目录在 `D:`，profile 在 `C:\Users\zdz20\.dsh\profiles\web`。pnpm 对跨盘符的 `link:` / `file:`
-算不出相对路径，会生成**目标被拼错的坏 junction**；于是 dsh 的 bundle 对账读不到
-`node_modules/dsh-git-vcs/package.json`，判定 "declares no dsh.bundle"，插件只当普通依赖装、
-**不进 `dsh.profile.bundles` 层**（现象：`dsh plugin add` 末尾提示 `declares no dsh.bundle`，
-`--dump-config` 里没有自己的层）。
-
-三条可行路线，任选其一：
-
-1. **手动建正确 junction，再让 dsh 自己对账**（推荐，改动最小）
-   ```powershell
-   $p = "$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-git-vcs"
-   cmd /c rmdir "$p"                                                     # 先删掉坏 junction（rmdir 只删链接）
-   cmd /c mklink /J "$p" "D:\zxh\code\git-plugin"
-   dsh plugin --profile web install                                       # 对账：自动把 dsh-git-vcs 追加进 bundles
-   dsh --profile web --dump-config | Select-String "dsh-git-vcs"
-   ```
-2. **把插件挪到 C: 盘同一盘符**，再 `dsh plugin --profile web add <新路径>`（例如 `%USERPROFILE%\code\dsh-git-vcs`）。
-3. **发布成 npm 包后按包名安装**（`dsh plugin --profile web add dsh-git-vcs`），走 registry 就没有跨盘符问题。
-
-清理残留（若第一次安装已经把坏依赖写进 profile 的 `package.json`）：
-
-```powershell
-dsh plugin --profile web remove dsh-git-vcs
-# remove 若也失败，手工删链接与依赖条目：
-cmd /c rmdir "$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-git-vcs"
-# 然后编辑 ~\.dsh\profiles\web\package.json，去掉 dependencies.dsh-git-vcs，并确认 dsh.profile.bundles 里没有它
-```
+如果本地插件与 DSH profile 位于不同盘符，旧版依赖管理器可能生成失效的链接，
+表现为 `declares no dsh.bundle`。优先使用 npm 包安装，或把源码放在与 profile 相同的盘符后重新安装。
+不要直接删除未知目录或复制其他机器上的 junction 清理命令。
 
 ## 使用方法
 
@@ -416,7 +384,7 @@ Amend 语义是修补上一次提交，**忽略勾选**（按钮文案里已注�
 
 ## 配置
 
-插件行的 `config`（见 `cordis.patch.yml`，改后触发热替换）：
+插件行的 `config`（见 `cordis.patch.yml`；修改后重启 `dsh web` 确保生效）：
 
 | 字段 | 默认 | 说明 |
 |------|------|------|
@@ -437,7 +405,7 @@ Amend 语义是修补上一次提交，**忽略勾选**（按钮文案里已注�
 
 ## 安全边界
 
-- git 一律以 **argv 形式**执行（`ctx.subprocess.spawn`，不经 shell），路径统一放在 `--` 之后，无注入面。
+- git 一律以 **argv 形式**执行（`ctx.subprocess.spawn`，不经 shell），文件路径放在 `--` 之后，并按字面文件名处理，降低命令和 pathspec 注入风险。
 - `cwd` 必须是绝对路径、存在且是目录；默认还要求它是 git 工作树（`rev-parse --show-toplevel`）；
   配置 `repoRoot` 后限定在其之下。
 - 执行环境禁用交互提示（`GIT_TERMINAL_PROMPT=0` / `GIT_ASKPASS=echo` / `SSH_ASKPASS=echo`），
@@ -446,7 +414,7 @@ Amend 语义是修补上一次提交，**忽略勾选**（按钮文案里已注�
 - RPC 路由自带信任栅栏：复用 `ctx.connection.requestRejection(req)`（Host/Origin 校验 + 浏览器会话认证），
   未通过返回 401 / 403。
 
-## 已知限制（v1）
+## 已知限制（0.2.0）
 
 - 提交树是多泳道图（每条分支一条泳道、分叉/汇合画在真正的分叉提交上），但：
   tag 暂不画标签芯片，因此「只被 tag 指向」的提交会以无标签节点出现；
@@ -475,7 +443,7 @@ DSH 未在 PATH 时用 `DSH_BIN=/绝对路径/dsh/lib/bin.js npm run test:integr
 | 脚本 | 用途 |
 |------|------|
 | `node scripts\verify-host.mjs [仓库]` | 不需要挂 profile，直接在宿主域内跑全部 host 端点（真实 git、临时仓库）。覆盖解析结果、错误码门禁、`allowPush` 门禁、相对路径/非仓库拒绝、未跟踪文件 diff、勾选提交的 pathspec 回归、提交树覆盖所有分支 + `skip` 分页不串页、`repo/init` 全部分支（建仓库 / 幂等 / 指定分支 / 非法分支名 / 嵌套拒绝 / 未出生分支 oid 归一 / `allowWrite` 门禁），最后再从 `lib/client.js` 的字面量**反查**客户端调用的每个端点在 host 侧都存在等 **64 条断言** |
-| `node scripts\render-probe.mjs` | 浏览器半区的离线自检：本机没装 react，脚本自带一个迷你 React 把面板真挂起来，跑「打开仓库 → 切 Log → 滚到底续拉 → 刷新」，断言提交树渲染出其它分支独有的提交、**泳道拓扑**（tip 上方不画线、分支各有泳道、斜线画在真正的分叉提交上、上下行竖直段与斜线带共用同一段 `calc(50% ± 4px)` 几何）、续拉按 hash 去重、刷新不缩回一页（**15 条断言**，视觉部分仍需真机目测） |
+| `node scripts\render-probe.mjs` | 浏览器半区的离线自检：本机没装 react，脚本自带一个迷你 React 把面板真挂起来，跑「打开仓库 → 切 Log → 滚到底续拉 → 刷新」，断言提交树渲染出其它分支独有的提交、**泳道拓扑**（tip 上方不画线、分支各有泳道、斜线画在真正的分叉提交上、上下行竖直段与斜线带共用同一段 `calc(50% ± 4px)` 几何）、续拉按 hash 去重、刷新不缩回一页（**17 条断言，含贮藏未跟踪文件选项**，视觉部分仍需真机目测） |
 | `node scripts\render-probe.mjs --real [仓库]` | 追加**与参考实现对照**的检查：把**真实仓库**的提交喂给同一份客户端代码渲染，再与 `git log --graph` 逐提交比对泳道下标与分叉行位置（两边用同一批提交、同一顺序），不一致就报出来 |
 | `node scripts\dom-probe.mjs` | 浏览器半区的**真机几何自检**：起 headless Chrome/Edge 渲染真实 `lib/client.js`（夹具数据），通过 CDP 取回**渲染后的像素几何**，断言泳道竖线与圆点同心、**斜线带边界精确落在「圆心 ± 4px」与行高上、同一个节点出来的线端落在同一高度（容差 0.75px）**；另有一组**合并线回归夹具**（拓扑照抄 certbase-offline：合并的第二父提交早被主干泳道期待）断言合并线直接并进主干泳道、泳道数不虚增、没有"一个节点都没有"的泳道、末行没有断头线、单标签 ≤ 96px、一行最多 3 个标签 + `+N`、提交树列宽 ≤ 240px、提交详情「分支」一行列出全部分支、**跨行的合并斜线落在目标节点的圆点上沿**；并单独加载一份「非仓库」快照断言**空态**行为：功能内容一条都不渲染、空态块铺满且按钮居中、无多余长文案、点按钮先展开分支名（默认 `main`、备选 `main`/`master`、点备选能改输入值）、确认后才发 `repo/init` 且带上所选分支、成功后功能面板自己长回来（**33 条断言**）。先 `npm install --prefix .npm-cache/domprobe react@18.3.1 react-dom@18.3.1`；缺浏览器/React 会自动跳过。**沙箱禁止命名管道**（Chrome 的 mojo IPC 会直接 FATAL），需放宽权限或沙箱外运行 |
 | `node scripts\dom-probe.mjs --repo <仓库>` | 追加**真实仓库**模式：把该仓库 `--all` 的整棵提交树喂进同一份客户端代码，在真浏览器里逐行量「没有节点的泳道」「向右突出又折返的合并线」「提交树列宽 ≤ 240px」「同一节点出来的线端落在同一高度」「合并的跨行斜线落在目标提交的圆点上沿」（再 +5 条断言，并会打印被检查的节点清单）。例：`node scripts\dom-probe.mjs --repo D:\zxh\code\certbase-offline` |

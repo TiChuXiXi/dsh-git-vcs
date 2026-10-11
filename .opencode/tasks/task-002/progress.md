@@ -4,8 +4,10 @@
 
 - 日期：2026-10-12。
 - 实现与验证完成；代码提交：`7850e7ec88c3e176a01fd6cf7146b1e8f22be70b`。
-- 推送未完成：HTTPS 无可用用户名凭据；GitHub 连接器对目标仓库返回 `permissions.push=false`；SSH 认证账号 `Charles-yueyue831` 对该仓库被拒绝写入。
-- 等用户为该账号授予仓库写权限，或配置有权限的 GitHub 凭据后，再执行 `git push -u origin develop`（SSH 凭据则通过 SSH URL 推送并 fetch）。本地提交和工作区均已保存。
+- 权限更新后已通过 SSH 推送 develop，远端提交为 `6d5510da2c99b983f8c64985ce9a717d72219b90`。
+- 已合并到本地 main，完善 0.2.0 README 与发布说明；修复 verify-host 对合并提交的误报，使用独立双文件提交夹具。
+- 发布前 npm test 与完整 DSH 集成复测通过；发布包包含 6 个预期文件，无凭据配置。
+- GitHub Release 和 npm 的最终发布状态将在完成后追加；当前环境 NPM_TOKEN 未配置。
 
 ## 完成项
 
@@ -18,5 +20,5 @@
 
 ## 边界
 
-未执行 npm 发布、tag 或 Release。未声称 Windows/Linux/桌面或每个真实 DSH 菜单均已端到端验证。
+兼容开发阶段未执行 npm 发布、tag 或 Release；后续发布状态见新增记录。未声称 Windows/Linux/桌面或每个真实 DSH 菜单均已端到端验证。
 测试安装和上游源码位于独立临时目录，未改用户的全局 DSH 安装或 profile。

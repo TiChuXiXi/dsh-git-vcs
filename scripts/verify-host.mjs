@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { apply } from '../index.js'
-import { callRegisteredRoute } from '../tests/helpers.mjs'
+import { callRegisteredRoute, git } from '../tests/helpers.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = resolve(process.argv[2] ?? process.cwd())
@@ -208,13 +208,16 @@ await check('show 不带 patch（noPatch）', 'show', { cwd, rev: 'HEAD', noPatc
   return value.commit === null ? 'commit 元数据为空' : undefined
 })
 
-const headDetail = await handler('show', { cwd, rev: 'HEAD', noPatch: true }, new AbortController().signal)
-const headFile = headDetail.ok === true && Array.isArray(headDetail.value.files) && headDetail.value.files.length > 0
-  ? headDetail.value.files[0].path
-  : null
-if (headFile === null) {
-  results.push('FAIL show/file 单文件差异: HEAD 没有变更文件可测')
-} else {
+// 单文件差异使用固定夹具，避免 HEAD 为合并或空提交时误报失败。
+const detailRepo = mkdtempSync(join(tmpdir(), 'gitvcs-detail-'))
+try {
+  const cwd = detailRepo
+  const headFile = 'selected.txt'
+  git(cwd, 'init', '--initial-branch=main')
+  writeFileSync(join(cwd, headFile), '选中文件\n', 'utf8')
+  writeFileSync(join(cwd, 'other.txt'), '其它文件\n', 'utf8')
+  git(cwd, 'add', '.')
+  git(cwd, 'commit', '-m', '单文件差异测试夹具')
   await check('show/file 单文件差异', 'show/file', { cwd, rev: 'HEAD', path: headFile }, (value) => {
     if (value.path !== headFile) return `path 回显不一致：${value.path}`
     if (typeof value.patch !== 'string' || value.patch.includes('diff --git') === false) return 'patch 不像 diff'
@@ -224,6 +227,8 @@ if (headFile === null) {
   })
   await expectError('show/file 缺 path', 'show/file', { cwd, rev: 'HEAD' }, 'git-vcs/bad-request')
   await expectError('show/file 路径以 - 开头', 'show/file', { cwd, rev: 'HEAD', path: '-x' }, 'git-vcs/bad-request')
+} finally {
+  rmSync(detailRepo, { recursive: true, force: true })
 }
 
 // 未知端点：必须返回 git-vcs/unknown-endpoint 信封（不抛）。
