@@ -1,6 +1,6 @@
 {
   "name": "dsh-git-vcs",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "DSH Web GUI 的 Git 版本管理插件：右侧栏新增「版本管理」页，功能与界面参照 IntelliJ IDEA 的 Version Control 工具窗（本地变更 / 提交 / 历史 / 分支 / 命令 / 贮藏）。",
   "type": "module",
   "main": "index.js",
@@ -17,7 +17,7 @@
   ],
   "dsh": {
     "engines": {
-      "dsh": ">=0.1.7-rc.2"
+      "dsh": ">=0.2.1-alpha.2"
     },
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -28,6 +28,12 @@
         "@deepseek-ai/dsh-client-ui-sidebar-right"
       ]
     }
+  },
+  "engines": { "node": ">=22.12.0" },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs && node scripts/verify-host.mjs && node scripts/render-probe.mjs && node scripts/preview-check.mjs",
+    "test:dom": "node scripts/dom-probe.mjs",
+    "test:integration": "node scripts/web-rpc-probe.mjs"
   },
   "keywords": [
     "dsh",

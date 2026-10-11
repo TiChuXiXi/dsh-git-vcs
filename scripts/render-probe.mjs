@@ -237,6 +237,7 @@ const payloadOf = (endpoint) => {
 
 async function fakeCall(channel, endpoint, payload) {
   calls.push({ endpoint, payload })
+  if (endpoint === 'stash') return { ok: true, value: { created: true, ref: 'stash@{0}', stdout: '' } }
   if (realSource !== null && endpoint === 'repo/snapshot') return realSource(payload)
   if (realSource !== null && endpoint === 'log') return { ok: true, value: { commits: [] } }
   if (endpoint === 'repo/snapshot') {
@@ -610,6 +611,19 @@ if (realAt !== -1) {
       return undefined
     })())
   }
+}
+
+// 贮藏选项必须从真实组件传到 host，避免只有服务端实现、UI 没转发。
+findButton(tree, 'Stash').props.onClick()
+tree = await settle(render)
+const stashLabel = find(tree, node => node.type === 'label' && texts(node).includes('包含未跟踪文件'))
+ok('贮藏页提供包含未跟踪文件选项', stashLabel === null ? '缺少选项' : undefined)
+if (stashLabel !== null) {
+  find(stashLabel, node => node.type === 'input').props.onChange({ target: { checked: true } })
+  tree = await settle(render)
+  findButton(tree, '贮藏当前改动').props.onClick()
+  tree = await settle(render)
+  ok('贮藏选项随请求转发给 host', payloadOf('stash')?.includeUntracked === true ? undefined : '未传 includeUntracked=true')
 }
 
 console.log(results.join('\n'))

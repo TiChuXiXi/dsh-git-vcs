@@ -7,11 +7,12 @@
  * 注意：沙箱下 Node 抓子进程输出不能用管道（EPERM），这里统一用文件描述符重定向。
  */
 import { spawn, spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, openSync, closeSync, readFileSync, existsSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, openSync, closeSync, readFileSync, existsSync, rmSync, writeFileSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { apply } from '../index.js'
+import { callRegisteredRoute } from '../tests/helpers.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = resolve(process.argv[2] ?? process.cwd())
@@ -31,10 +32,14 @@ const fakeSubprocess = {
     const child = spawn(spec.argv[0], spec.argv.slice(1), {
       cwd: spec.cwd,
       env: { ...process.env, ...(spec.env ?? {}) },
-      stdio: ['ignore', outFd, errFd],
+      stdio: [typeof spec.stdio.stdin === 'object' ? 'pipe' : 'ignore', outFd, errFd],
       windowsHide: true,
       signal: spec.signal,
     })
+    if (child.stdin) {
+      child.stdin.on('error', () => {})
+      child.stdin.end(spec.stdio.stdin.data)
+    }
     const done = new Promise((settle, reject) => {
       child.on('error', (cause) => {
         closeSync(outFd)
@@ -74,46 +79,25 @@ const fakeSubprocess = {
   },
 }
 
-/* host 半区现在自己往 webServer 注册 RPC 路由，并复用 connection.requestRejection 做信任栅栏；
-   这里给两个垫片，并把「调用端点」包成走这条路由（信封与 Connection RPC 一致）。 */
-function makeFakeWebServer(holder) {
-  return {
-    register(route) {
-      holder.route = route
-      return () => { holder.route = undefined }
-    },
-  }
+/** 单元测试只替换官方 RPC 注册边界；HTTP 协议交给真实宿主集成测试。 */
+function makeConnection(holder) {
+  return { requestRejection: () => undefined }
 }
-const fakeConnection = { requestRejection: () => undefined }
-
-/** 造一个只读的请求体迭代器 + 收集响应的假 res。 */
+function makeFakeWebServer(holder) {
+  return { register(route) { holder.route = route; return () => { holder.route = undefined } } }
+}
 async function callRoute(holder, endpoint, payload) {
-  const body = JSON.stringify({ type: 'client-request', rpcId: `verify-${endpoint}`, method: endpoint, payload })
-  const response = holder.response
-  await holder.route.handler({
-    method: 'POST',
-    url: `/git-vcs/${endpoint}`,
-    headers: {},
-    async *[Symbol.asyncIterator]() {
-      yield Buffer.from(body, 'utf8')
-    },
-  }, {
-    writeHead(status) { response.status = status },
-    end(value) { response.body = value === undefined ? '' : String(value) },
-  })
-  if (response.status !== 200) throw new Error(`HTTP ${response.status} ${response.body.slice(0, 80)}`)
-  const full = JSON.parse(response.body)
-  if (full.type !== 'server-response') throw new Error(`响应不是 server-response：${response.body.slice(0, 120)}`)
-  return full.result
+  return callRegisteredRoute(holder.route, endpoint, payload)
 }
 
 const mainRoute = { route: undefined, response: { status: 0, body: '' } }
 let handler = (endpoint, payload) => callRoute(mainRoute, endpoint, payload)
 const fakeCtx = {
+  connection: makeConnection(mainRoute),
   get(key) {
     if (key === 'subprocess') return fakeSubprocess
     if (key === 'webServer') return makeFakeWebServer(mainRoute)
-    if (key === 'connection') return fakeConnection
+    if (key === 'connection') return makeConnection(mainRoute)
     return undefined
   },
   effect(fn) {
@@ -144,7 +128,8 @@ const samePath = (left, right) => left.replace(/\\/g, '/').toLowerCase() === rig
 
 await check('repo/info', 'repo/info', { cwd }, (value) => {
   if (!samePath(value.repo.root, REPO)) return `root=${value.repo.root}`
-  if (value.repo.branch !== 'main') return `branch=${value.repo.branch}`
+  const branch = spawnSync('git', ['branch', '--show-current'], { cwd: REPO, encoding: 'utf8' }).stdout.trim()
+  if (value.repo.branch !== branch) return `branch=${value.repo.branch}`
   if (value.config.allowPush !== false) return 'allowPush 未透传'
   return undefined
 })
@@ -377,10 +362,11 @@ await check('只提交勾选的路径，其余原位不动', 'status', { cwd: re
 const pushRoute = { route: undefined, response: { status: 0, body: '' } }
 const pushHandler = (endpoint, payload) => callRoute(pushRoute, endpoint, payload)
 const pushCtx = {
+  connection: makeConnection(pushRoute),
   get(key) {
     if (key === 'subprocess') return fakeSubprocess
     if (key === 'webServer') return makeFakeWebServer(pushRoute)
-    if (key === 'connection') return fakeConnection
+    if (key === 'connection') return makeConnection(pushRoute)
     return undefined
   },
   effect(fn) {
@@ -516,7 +502,7 @@ const configuredInitBranch = gitOutAt(REPO, ['config', '--get', 'init.defaultBra
 let initValue = null
 await check('repo/init 在空目录建仓库', 'repo/init', { cwd: initScratch }, (value) => {
   initValue = value
-  if (value.root.replace(/\\/g, '/').toLowerCase() !== initScratch.replace(/\\/g, '/').toLowerCase()) return `root=${value.root}`
+  if (!samePath(value.root, realpathSync(initScratch))) return `root=${value.root}`
   const expected = configuredInitBranch === '' ? 'main' : configuredInitBranch
   if (value.branch !== expected) return `branch=${value.branch}，期望 ${expected}`
   return value.already === false ? undefined : `already=${value.already}`
@@ -533,7 +519,7 @@ results.push(gitOutAt(initScratch, ['symbolic-ref', '--short', 'HEAD']) === (ini
   : `FAIL HEAD 指向 ${gitOutAt(initScratch, ['symbolic-ref', '--short', 'HEAD'])}，期望 ${initValue?.branch}`)
 
 await check('repo/init 之后 snapshot 立即可用（空仓库：0 提交、当前分支已就位）', 'repo/snapshot', { cwd: initScratch, limit: 50, all: true }, (value) => {
-  if (value.repo.root.replace(/\\/g, '/').toLowerCase() !== initScratch.replace(/\\/g, '/').toLowerCase()) return `root=${value.repo.root}`
+  if (!samePath(value.repo.root, realpathSync(initScratch))) return `root=${value.repo.root}`
   if (Array.isArray(value.commits) === false || value.commits.length !== 0) return `commits=${JSON.stringify(value.commits).slice(0, 80)}`
   if (value.repo.branch !== initValue?.branch) return `branch=${value.repo.branch}，期望 ${initValue?.branch}`
   // 未出生的分支还没有 ref（第一个提交之后才会出现），所以 branches.local 此刻就是空的 —— 这是 git 的语义。
@@ -573,10 +559,11 @@ results.push(existsSync(join(nestedScratch, '.git')) === false
 const initRoute = { route: undefined, response: { status: 0, body: '' } }
 const initHandler = (endpoint, payload) => callRoute(initRoute, endpoint, payload)
 apply({
+  connection: makeConnection(initRoute),
   get(key) {
     if (key === 'subprocess') return fakeSubprocess
     if (key === 'webServer') return makeFakeWebServer(initRoute)
-    if (key === 'connection') return fakeConnection
+    if (key === 'connection') return makeConnection(initRoute)
     return undefined
   },
   effect(fn) { fn() },
@@ -600,7 +587,7 @@ writeFileSync(cfgFile, `[credential]\n\thelper = store --file=${credFile.replace
 const savedGlobal = process.env.GIT_CONFIG_GLOBAL
 const savedSystem = process.env.GIT_CONFIG_SYSTEM
 process.env.GIT_CONFIG_GLOBAL = cfgFile
-process.env.GIT_CONFIG_SYSTEM = 'NUL'
+process.env.GIT_CONFIG_SYSTEM = process.platform === 'win32' ? 'NUL' : '/dev/null'
 
 try {
   await check('credential/approve 返回结构', 'credential/approve', {

@@ -8,27 +8,39 @@ Version Control 工具窗（`Alt+9`）与 Commit 工具窗（`Alt+0`）——本
 
 | 项目 | 值 |
 |------|-----|
-| 插件版本 | **`0.1.2`**（`package.json` 的 `version`，已发布到 npm：[dsh-git-vcs](https://www.npmjs.com/package/dsh-git-vcs)） |
-| 仓库 / Release | <https://github.com/TiChuXiXi/dsh-git-vcs>（tag `v0.1.2`） |
+| 插件版本 | **`0.2.0`**（本次源码更新在 `develop` 分支；未发布 npm 或 Release） |
+| 仓库 / 分支 | <https://github.com/TiChuXiXi/dsh-git-vcs/tree/develop> |
 | npm 包名 / 插件行 id | `dsh-git-vcs` / `git-vcs` |
-| 兼容的 DeepSeek Harness | **`@deepseek-ai/dsh` ≥ `0.1.7-rc.2`**（写在 `package.json` 的 `dsh.engines.dsh`；开发与验证版本就是 `0.1.7-rc.2`） |
-| 依赖的官方插件 | `@deepseek-ai/dsh-client-ui-sidebar-right`（客户端半区 `dsh.client.inject` 声明；随 web-app 分发，本机为 `0.1.7-rc.2`） |
+| 兼容的 DeepSeek Harness | **`@deepseek-ai/dsh` ≥ `0.2.1-alpha.2`**；验证基线为官方 `master` 提交 `d743267388641bc76f17c45ce8b4c231aed1d32c` |
+| 依赖的官方插件 | `@deepseek-ai/dsh-client-ui-sidebar-right`（随 web-app 分发，已验证 `0.2.1-alpha.2`） |
 | 依赖的 host 服务 | `subprocess`（跑 git）、`connection`（RPC 信任栅栏）、`webServer`（注册 `/git-vcs` 路由） |
 | 依赖的 client 能力 | `sidebarRightTabs`（注册 tab 类型）、`slots`（`sidebar.right.pane.tab` / `.title`）、标准 props `sessionId` + `useSessions`（取会话工作目录） |
 | git | 2.x；argv 调用（不进 shell），从 PATH 解析或由配置 `gitPath` 指定 |
-| Node.js | ESM；本机验证 `v22.23.2` |
+| Node.js | ESM；要求 ≥ `22.12.0`，本次 macOS 验证 `v24.18.0` |
 | 构建 | **零构建**：无编译步骤、无运行时依赖（host 半区不 import 任何 `@deepseek-ai/*` 值） |
 
-> 最低版本取 `0.1.7-rc.2` 的原因：客户端半区取「会话工作目录」依赖 session 作用域 slot 的标准
-> prop `sessionId` —— DSH 0.1.7 的 `SessionListState` 移除了旧的 `current` 字段（0.1.5 时代用它定位
-> 当前会话），不升级取不到 cwd、面板会停在「未加载」。host 侧走「自己注册 `webServer` 前缀路由」
-> 这条通道，需要 `webServer` 与 `connection` 两个服务同时可注入（细节见文末「RPC 通道是怎么挂的」）。
-> 升级 DSH 后先跑一遍 `node scripts/verify-host.mjs`。
+> 2026-10-12 查询时，官方仓库最新版及 npm `alpha` 为 `0.2.1-alpha.2`，npm `latest` 仍为
+> `0.2.0-rc.2`。本次以官方仓库最新版为验证目标，旧宿主未列入本版支持范围。
+> session 作用域的 `sessionId` + `useSessions`、右侧栏槽位和 subprocess 接口仍适用。
+> 完整验证记录和未覆盖范围见 [兼容性测试报告](docs/compatibility-0.2.1.md)。
+
+### 使用 develop 中的更新
+
+先安装 `@deepseek-ai/dsh@0.2.1-alpha.2`，然后在仓库目录执行：
+
+```sh
+git switch develop
+npm test
+dsh plugin --profile web add .
+```
+
+重启 `dsh web` 并刷新浏览器。本次只更新 GitHub 的 `develop`；下面的 npm 安装章节仍是已发布旧版本的安装方式。
 
 ### 更新记录
 
 | 版本 | 主要变化 |
 |------|----------|
+| **0.2.0（develop）** | 对齐 DSH `0.2.1-alpha.2`；加固 RPC 请求校验及取消传播；修复首次提交前取消暂存、通配符文件误操作、仓库路径逃逸；贮藏支持包含未跟踪文件并准确报告空操作；补齐跨平台测试与完整宿主集成测试 |
 | **0.1.2** | 适配 **DSH 0.1.7**：会话工作目录改从 session 作用域的标准 prop `sessionId` + `useSessions` 选择器取（0.1.7 的 `SessionListState` 移除了旧的 `current` 字段，旧写法导致面板永远停在「（未加载）」）；两个探针夹具同步成 0.1.7 的真机 props 形态，避免"夹具与真机漂移、自检全绿而真机红" |
 | 0.1.1 | 提交树覆盖**所有分支**并支持滚到底续拉（issue #1，`--all` + `--skip`，单页 50 / 上限 2000 行）；提交树从单轨画法改成**多泳道图**（对齐 `git log --graph` / IDEA，分叉与汇合画在真正的分叉提交上）；修掉两处真机几何错位（斜线层 SVG 高度按 viewBox 比例算成 100px、连线比圆点偏右 1px）；**目录不是仓库时整页换成居中空态 + 一键 `git init`**（issue #2，可选初始分支名）；新增真浏览器几何/空态自检 `scripts/dom-probe.mjs`（18 条断言）与「客户端调用的端点 host 侧都存在」的结构性断言 |
 | 0.1.0 | 首个发布版：右侧栏「版本管理」页（Local Changes / Log / Console / Branches / Remotes / Stash）、按文件勾选提交、推送与凭据兜底、自挂 `/git-vcs` RPC 路由 |
@@ -346,7 +358,7 @@ Amend 语义是修补上一次提交，**忽略勾选**（按钮文案里已注�
 「应用（`apply`，保留记录）/ 弹出（`pop`，取回并删除记录）/ 删除（`drop`）」处理；
 与 Local Changes 里的「暂存」不是一回事（那是 `git add` 放进索引）。
 
-- 当前实现用 `git stash push [-m 说明]`，**不带 `-u`**：未跟踪的新文件不会被收走，会留在工作区。
+- 默认 `git stash push [-m 说明]`；勾选「包含未跟踪文件」时追加 `--include-untracked`。没有新贮藏时端点返回 `created: false, ref: null`，不会把旧记录误报成新记录。
 - 列表里的引用是 **`stash@{n}` 数字选择器**（由列表下标合成，与 git 编号一致）——不能用 `%gd` 配
   `--date=iso-strict`，那会生成 `stash@{2026-09-15T…}` 时间戳选择器，而 git 对它会打印 `Dropped …`、
   退出码 0，**却什么也不删**；host 现在还会核对操作前后的贮藏条数，把这种静默失败变成明确错误。
@@ -441,7 +453,7 @@ Amend 语义是修补上一次提交，**忽略勾选**（按钮文案里已注�
   续拉出更多提交后如果又冒出别的分支，泳道区会变宽（整表重排一次列宽），已显示行的泳道位置不变。
   单次刷新最多渲染 2000 行（更早的历史靠滚到底续拉，超过上限后停止续拉）。
 - 差异视图是统一 diff 文本，没有并排 diff、没有按 hunk/行勾选提交（Partial Commit）。
-- `git stash push` 不带 `-u`，未跟踪文件不会被收走（面板暂无开关）。
+- 贮藏支持未跟踪文件，但不包含被 `.gitignore` 忽略的文件。
 - Remotes 页增删远程后不会自动 fetch：track 关系已写进 `.git/config`，是否抓取由用户在工具栏点 Fetch。
 - 没有 changelist 分组、没有 Shelf、没有多 VCS root、没有编辑器 gutter 标记（DSH 无编辑器面板可挂）。
 - 没有文件系统监听：自动刷新依赖 `autoRefreshSeconds` 或手动刷新。
@@ -451,6 +463,15 @@ Amend 语义是修补上一次提交，**忽略勾选**（按钮文案里已注�
 
 ## 自检与排障
 
+`npm test` 是默认入口：10 组 Node 回归测试 + 64 项 host 断言 + 客户端渲染探针 + 6 项成功结果的 VM/JSON 检查。
+新增回归使用临时仓库和本地 bare remote，覆盖 push/pull/fetch、分支、提交、merge/revert/cherry-pick/reset/discard、权限门禁、路径和 RPC 边界。
+
+`npm run test:integration` 启动隔离的完整 DSH Web 实例，校验认证、真实 Git 写操作、客户端启动清单及其带版本的 combo 资源；失败返回非零。
+DSH 未在 PATH 时用 `DSH_BIN=/绝对路径/dsh/lib/bin.js npm run test:integration`。
+
+`npm run test:dom` 支持 macOS/Linux/Windows 的 Chrome/Edge；可用 `DOM_PROBE_BROWSER` 指定浏览器，
+用 `DOM_PROBE_MODULES` 指向含 `react@18.3.1` / `react-dom@18.3.1` 的 `node_modules`。缺依赖时会明确跳过，不视作实际验证通过。
+
 | 脚本 | 用途 |
 |------|------|
 | `node scripts\verify-host.mjs [仓库]` | 不需要挂 profile，直接在宿主域内跑全部 host 端点（真实 git、临时仓库）。覆盖解析结果、错误码门禁、`allowPush` 门禁、相对路径/非仓库拒绝、未跟踪文件 diff、勾选提交的 pathspec 回归、提交树覆盖所有分支 + `skip` 分页不串页、`repo/init` 全部分支（建仓库 / 幂等 / 指定分支 / 非法分支名 / 嵌套拒绝 / 未出生分支 oid 归一 / `allowWrite` 门禁），最后再从 `lib/client.js` 的字面量**反查**客户端调用的每个端点在 host 侧都存在等 **64 条断言** |
@@ -459,9 +480,9 @@ Amend 语义是修补上一次提交，**忽略勾选**（按钮文案里已注�
 | `node scripts\dom-probe.mjs` | 浏览器半区的**真机几何自检**：起 headless Chrome/Edge 渲染真实 `lib/client.js`（夹具数据），通过 CDP 取回**渲染后的像素几何**，断言泳道竖线与圆点同心、**斜线带边界精确落在「圆心 ± 4px」与行高上、同一个节点出来的线端落在同一高度（容差 0.75px）**；另有一组**合并线回归夹具**（拓扑照抄 certbase-offline：合并的第二父提交早被主干泳道期待）断言合并线直接并进主干泳道、泳道数不虚增、没有"一个节点都没有"的泳道、末行没有断头线、单标签 ≤ 96px、一行最多 3 个标签 + `+N`、提交树列宽 ≤ 240px、提交详情「分支」一行列出全部分支、**跨行的合并斜线落在目标节点的圆点上沿**；并单独加载一份「非仓库」快照断言**空态**行为：功能内容一条都不渲染、空态块铺满且按钮居中、无多余长文案、点按钮先展开分支名（默认 `main`、备选 `main`/`master`、点备选能改输入值）、确认后才发 `repo/init` 且带上所选分支、成功后功能面板自己长回来（**33 条断言**）。先 `npm install --prefix .npm-cache/domprobe react@18.3.1 react-dom@18.3.1`；缺浏览器/React 会自动跳过。**沙箱禁止命名管道**（Chrome 的 mojo IPC 会直接 FATAL），需放宽权限或沙箱外运行 |
 | `node scripts\dom-probe.mjs --repo <仓库>` | 追加**真实仓库**模式：把该仓库 `--all` 的整棵提交树喂进同一份客户端代码，在真浏览器里逐行量「没有节点的泳道」「向右突出又折返的合并线」「提交树列宽 ≤ 240px」「同一节点出来的线端落在同一高度」「合并的跨行斜线落在目标提交的圆点上沿」（再 +5 条断言，并会打印被检查的节点清单）。例：`node scripts\dom-probe.mjs --repo D:\zxh\code\certbase-offline` |
 | `node scripts\graph-sim.mjs <仓库> [条数] [old\|new]` | **泳道算法离线仿真**（纯 ASCII，不起浏览器）：把真实仓库的提交喂给旧/新两版布局算法，逐行画出泳道并统计「无节点泳道」「外突折返尖角」。定位合并线画法问题时用它最快 |
-| `node scripts\preview-check.mjs` | 在 `node:vm` 沙箱里装载真实 host 半区，按 host-runner 的 cloneJson 规则校验每个端点的信封是否无损 JSON，并确认 RPC 通道注册成功 |
+| `node scripts/preview-check.mjs [仓库]` | 在独立 VM 中加载真实 host，6 个端点必须返回成功，检查 JSON 无损序列化；使用本机路径实现，不将错误返回误判为通过 |
 | `node scripts\status-probe.mjs [仓库]` | 用插件自己的 `status` / `diff` 读当前工作区，逐条打印 index/worktree 标记与三种 diff 长度——排查「列表说改了、差异却是空」 |
-| `node scripts\web-rpc-probe.mjs [插件目录]` | 在**隔离的 DSH_HOME** 里用完整 web 组合（base + web-app + 本插件）起临时实例（端口 3199），抓 host 日志并对 `/git-vcs` 做免认证探测：**401 = 路由在**（与 `/api` 一致）、**405 = 路由不在**（被静态兜底接手）。不传目录用当前源码；**传目录可以验证"别人从 npm 装到的那份"**，例如 `node scripts\web-rpc-probe.mjs "$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-git-vcs"` |
+| `node scripts/web-rpc-probe.mjs [插件目录]` | 完整 DSH Web 集成测试：隔离 profile、随机端口、真实认证、Git 暂存／取消暂存、401/403、RPC 信封、客户端启动图与版本资源；支持 `DSH_BIN`，异常退出也清理测试实例 |
 | `node scripts\live-probe.mjs [--keep]` | **真机联调探针（诊断工具，不判红）**：在隔离 DSH_HOME 里起真实例（端口 3211），用 headless Chrome 打开**真实页面**（启动日志里带 token 的 URL），打印插件启动行、页面概览与「版本管理」相关的可交互元素。装配层问题（标准 props、会话作用域、认证后的 RPC 通路）只有真实例才暴露，而这类链路的 DOM 自动化（首启弹层 → 会话界面 → 展开右侧栏 → 点开 tab）做成硬断言会长期假红，所以只输出供人工判读 |
 
 浏览器半区的**布局/视觉**由 `scripts\dom-probe.mjs` 用 headless 浏览器量像素来守（泳道几何、圆点同心、
@@ -495,11 +516,11 @@ dsh plugin --profile web remove dsh-git-vcs
 （请求 `{type:"client-request",rpcId,method,payload}` → 响应 `{type:"server-response",rpcId,result}`），
 并复用 `ctx.connection.requestRejection(req)` 做信任栅栏（Host/Origin + 浏览器会话认证）。
 
-不用官方那两个入口的原因（`@deepseek-ai/dsh` 0.1.5-rc.1 实测）：
+不用官方那两个入口的原因（已在 `@deepseek-ai/dsh@0.2.1-alpha.2` 完整 Web 组合中复测）：
 
 - `connection.rpc.handle(channel, handler)`：它把路由注册到 **connection 服务自己 ctx** 的 `webServer` 上，
-  而 web-app 的 `connection` 行只 `inject: [webRuntime]`，任何第三方调用都会
-  `cannot get property "webServer" without inject`，**整棵插件树加载失败**。
+  而 web-app 的 `connection` 行注入 `[webStartup]` 而没有 `webServer`；本插件调用时实测
+  `cannot get property "webServer" without inject`，插件未激活，RPC 返回 405。
 - `connection.rpc.intercept('/api', …)`：官方推荐的共享通道，但是**单占位**——
   api-gateway 已经占了，再注册会抛 `already has an interceptor`。
 
