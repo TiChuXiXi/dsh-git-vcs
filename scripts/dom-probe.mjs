@@ -92,6 +92,12 @@ function readSnapshot(repoPath) {
 const realSnapshot = REPO === null ? null : readSnapshot(REPO)
 
 const BROWSERS = [
+  process.env.DOM_PROBE_BROWSER ?? '',
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+  '/usr/bin/chromium',
+  '/usr/bin/chromium-browser',
+  '/usr/bin/google-chrome',
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
   'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
   join(process.env.LOCALAPPDATA ?? '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
@@ -99,8 +105,9 @@ const BROWSERS = [
   'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
 ]
 const browser = BROWSERS.find((path) => path !== '' && existsSync(path))
-const react = join(SCRATCH, 'node_modules', 'react', 'umd', 'react.production.min.js')
-const reactDom = join(SCRATCH, 'node_modules', 'react-dom', 'umd', 'react-dom.production.min.js')
+const reactModules = process.env.DOM_PROBE_MODULES ?? join(SCRATCH, 'node_modules')
+const react = join(reactModules, 'react', 'umd', 'react.production.min.js')
+const reactDom = join(reactModules, 'react-dom', 'umd', 'react-dom.production.min.js')
 if (browser === undefined) {
   console.log('跳过：本机没找到 Chrome/Edge（真机几何自检需要浏览器）')
   process.exit(0)

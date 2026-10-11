@@ -11,7 +11,7 @@
  * `ctx.get()` 读取——任一服务缺席即停在 pending（而不是带着 undefined 空转）。
  */
 
-import { stat } from 'node:fs/promises'
+import { stat, realpath } from 'node:fs/promises'
 import { isAbsolute, relative, resolve as resolvePath } from 'node:path'
 
 export const name = 'git-vcs'
@@ -109,12 +109,12 @@ function clampInt(value, min, max, fallback) {
 function isInside(path, root) {
   const rel = relative(root, path)
   if (rel === '') return true
-  return !rel.startsWith('..') && !isAbsolute(rel)
+  return rel !== '..' && !rel.startsWith('../') && !rel.startsWith('..\\') && !isAbsolute(rel)
 }
 
 /** 从 git 的 stderr 归类错误码：调用方按 code 分支，不解析 message。 */
 function classify(exitCode, stderr, aborted) {
-  if (aborted) return 'git-vcs/timeout'
+  if (aborted) return 'git-vcs/cancelled'
   const text = stderr.toLowerCase()
   if (text.includes('not a git repository')) return 'git-vcs/not-a-repo'
   if (text.includes('could not resolve host') || text.includes('failed to connect') || text.includes('network is unreachable')) return 'git-vcs/network'
@@ -400,7 +400,8 @@ function cacheKey(path) {
 export function apply(ctx, rawConfig) {
   const config = normalizeConfig(rawConfig)
   const subprocess = ctx.get('subprocess')
-  const connection = ctx.get('connection')
+  // 明确使用声明的注入属性；路由仍由本插件的 webServer 注册。
+  const connection = ctx.connection
   const webServer = ctx.get('webServer')
 
   console.log(`[dsh-git-vcs] host 半区激活：subprocess=${subprocess === undefined ? '缺席' : '就绪'} connection=${connection === undefined ? '缺席' : '就绪'}`)
@@ -471,12 +472,16 @@ export function apply(ctx, rawConfig) {
       },
       graceMs: 5000,
       signal: bound,
-      env: GIT_ENV,
+      // 仅对直接接收文件路径的命令启用；stash 内部使用 pathspec 魔法，不能继承此开关。
+      env: { ...GIT_ENV, ...(['add', 'restore', 'rm', 'diff', 'show', 'log', 'ls-files', 'clean', 'commit'].includes(args[0])
+        ? { GIT_LITERAL_PATHSPECS: '1' } : {}) },
     })
     let outcome
     try {
       outcome = await handle.done
     } catch (cause) {
+      if (bound.aborted) throw new GitError(timeout.aborted ? 'git-vcs/timeout' : 'git-vcs/cancelled',
+        timeout.aborted ? 'git 执行超时' : 'git 请求已取消')
       throw new GitError('git-vcs/spawn-failed', `无法启动 git：${cause instanceof Error ? cause.message : String(cause)}`, {
         argv: redactArgv(['git', ...args]),
       })
@@ -490,8 +495,8 @@ export function apply(ctx, rawConfig) {
       argv: redactArgv(['git', ...args]),
       exitCode: outcome.exitCode,
       durationMs,
-      stdout: sensitive === true ? '（凭据相关命令，输出已隐藏）' : stdout.text,
-      stderr: sensitive === true ? '' : stderr.text,
+      stdout: sensitive === true ? '（凭据相关命令，输出已隐藏）' : redactText(stdout.text),
+      stderr: sensitive === true ? '' : redactText(stderr.text),
       truncated: stdout.truncated || stderr.truncated,
       timeout: timeout.aborted,
     }
@@ -607,9 +612,9 @@ export function apply(ctx, rawConfig) {
     if (!isAbsolute(rawCwd)) {
       throw new GitError('git-vcs/bad-request', `cwd 必须是绝对路径：${rawCwd}`)
     }
-    const cwd = resolvePath(rawCwd)
+    const cwd = await realpath(resolvePath(rawCwd)).catch(() => resolvePath(rawCwd))
     if (config.repoRoot !== '') {
-      const root = resolvePath(config.repoRoot)
+      const root = await realpath(resolvePath(config.repoRoot))
       const same = process.platform === 'win32' ? cwd.toLowerCase() === root.toLowerCase() : cwd === root
       const inside = process.platform === 'win32' ? isInside(cwd.toLowerCase(), root.toLowerCase()) : isInside(cwd, root)
       if (!same && !inside) {
@@ -633,7 +638,8 @@ export function apply(ctx, rawConfig) {
     if (top.exitCode !== 0) {
       throw new GitError('git-vcs/not-a-repo', `不是 git 仓库：${cwd}`, { cwd })
     }
-    const root = top.stdout.trim()
+    // Git 会向父目录寻找仓库；允许的 cwd 不代表找到的仓库根也在允许范围内。
+    const root = await validateCwd(top.stdout.trim())
     rootCache.set(key, root)
     rootCache.set(cacheKey(root), root)
     return { cwd, root }
@@ -662,7 +668,7 @@ export function apply(ctx, rawConfig) {
   /** 取要操作的路径数组（JSON 兼容校验）。 */
   function readPaths(payload) {
     const paths = payload?.paths
-    if (!Array.isArray(paths) || paths.some((p) => typeof p !== 'string' || p === '' || p.includes('\0'))) {
+    if (!Array.isArray(paths) || paths.length === 0 || paths.some((p) => typeof p !== 'string' || p === '' || p.includes('\0'))) {
       throw new GitError('git-vcs/bad-request', 'paths 必须是非空字符串数组')
     }
     return paths
@@ -931,6 +937,9 @@ export function apply(ctx, rawConfig) {
         args.push(filePath)
       }
       if (payload?.untracked === true) {
+        const path = readFilePath(payload)
+        const target = await realpath(resolvePath(root, path))
+        if (!isInside(target, root)) throw new GitError('git-vcs/outside-root', '未跟踪文件不在当前仓库内')
         const result = await runGit(['diff', '--no-color', '--no-ext-diff', '--no-index', '--', '/dev/null', String(filePath)], { cwd: root, signal })
         gitOk(result, { allowExit: [0, 1] })
         return { patch: result.stdout, empty: result.stdout.trim() === '', argv: result.argv }
@@ -1077,7 +1086,12 @@ export function apply(ctx, rawConfig) {
     async unstage(payload, signal) {
       requireWrite()
       const { root } = await ensureWorkdir(payload?.cwd, signal)
-      const args = payload?.all === true ? ['restore', '--staged', '--', '.'] : ['restore', '--staged', '--', ...readPaths(payload)]
+      const paths = payload?.all === true ? ['.'] : readPaths(payload)
+      const head = await runGit(['rev-parse', '--verify', 'HEAD'], { cwd: root, signal })
+      // 首次提交之前没有 HEAD，restore --staged 不可用；只从索引移除，保留工作文件。
+      const args = head.exitCode === 0
+        ? ['restore', '--staged', '--', ...paths]
+        : ['rm', '--cached', '-r', '--', ...paths]
       const result = gitOk(await runGit(args, { cwd: root, signal }))
       return { argv: result.argv, stdout: result.stdout }
     },
@@ -1267,11 +1281,14 @@ export function apply(ctx, rawConfig) {
       }
       requireWrite()
       if (action === 'push') {
+        const previous = await runGit(['rev-parse', '--verify', 'refs/stash'], { cwd: root, signal })
         const args = ['stash', 'push']
+        if (payload?.includeUntracked === true) args.push('--include-untracked')
         if (typeof payload?.message === 'string' && payload.message !== '') args.push('-m', payload.message)
         const result = gitOk(await runGit(args, { cwd: root, signal }))
-        // 记录这次 push 后的最新引用，便于调用方确认（drop/pop 用 stash@{n} 编号）。
-        return { stdout: result.stdout, ref: 'stash@{0}' }
+        const current = await runGit(['rev-parse', '--verify', 'refs/stash'], { cwd: root, signal })
+        const created = current.exitCode === 0 && current.stdout !== previous.stdout
+        return { stdout: result.stdout, created, ref: created ? 'stash@{0}' : null }
       }
       if (action === 'pop' || action === 'apply' || action === 'drop') {
         const ref = readStashRef(payload)
@@ -1346,7 +1363,7 @@ export function apply(ctx, rawConfig) {
   }
 
   const handler = async (endpoint, payload, signal) => {
-    const fn = endpoints[endpoint]
+    const fn = Object.hasOwn(endpoints, endpoint) ? endpoints[endpoint] : undefined
     if (fn === undefined) {
       return { ok: false, error: { code: 'git-vcs/unknown-endpoint', message: `未知端点：${String(endpoint)}`, details: {} } }
     }
@@ -1369,9 +1386,9 @@ export function apply(ctx, rawConfig) {
   }
 
   /*
-   * 为什么自己注册 webServer 路由，而不用 `connection.rpc.handle(channel, handler)`：
+   * 0.2.1-alpha.2 完整 Web 组合实测仍需自注册路由（见 test:integration）：
    *   · 那个 API 把路由注册到 **connection 服务自己的 ctx** 的 `webServer` 上，而 web-app 的
-   *     connection 行只 inject 了 [webRuntime]，于是任何第三方调用都会炸
+   *     connection 行注入 [webStartup] 而没有 webServer，本插件调用实测报错
    *     `cannot get property "webServer" without inject`（不只是我们的问题，是这版 dsh 的空档）；
    *   · 官方推荐的共享通道 `connection.rpc.intercept('/api', …)` 是**单占位**（api-gateway 已经占了，
    *     再注册会抛 already has an interceptor）。
@@ -1413,6 +1430,16 @@ export function apply(ctx, rawConfig) {
         response.end(rejection === 401 ? 'unauthorized' : 'forbidden')
         return
       }
+      if (request.method !== 'POST') {
+        response.writeHead(405, { allow: 'POST' })
+        response.end('method not allowed')
+        return
+      }
+      if (request.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') {
+        response.writeHead(415)
+        response.end('content type must be application/json')
+        return
+      }
       let message = null
       try {
         message = await readJsonBody(request)
@@ -1426,8 +1453,24 @@ export function apply(ctx, rawConfig) {
       }
       const rpcId = message !== null && typeof message.rpcId === 'string' ? message.rpcId : 'invalid-request'
       const method = message !== null && typeof message.method === 'string' ? message.method : ''
-      const payload = message !== null && message.payload !== null && typeof message.payload === 'object' ? message.payload : {}
-      const result = await handler(method, payload, undefined)
+      const payload = message?.payload ?? {}
+      const endpoint = (request.url ?? '').split('?')[0].slice(RPC_CHANNEL.length + 1)
+      if (message?.type !== 'client-request' || rpcId === 'invalid-request' || method !== endpoint || !method
+          || typeof payload !== 'object' || Array.isArray(payload)) {
+        respondJson(response, 400, { type: 'server-response', rpcId,
+          result: { ok: false, error: { code: 'git-vcs/bad-request', message: 'RPC 请求格式或端点不匹配', details: {} } } })
+        return
+      }
+      // 浏览器断开连接后终止仍在执行的 Git；响应完成时不触发取消。
+      const controller = new AbortController()
+      const cancel = () => { if (!response.writableEnded) controller.abort() }
+      response.once?.('close', cancel)
+      let result
+      try {
+        result = await handler(method, payload, controller.signal)
+      } finally {
+        response.off?.('close', cancel)
+      }
       respondJson(response, 200, { type: 'server-response', rpcId, result })
     },
   }), 'dsh-git-vcs: rpc channel')
